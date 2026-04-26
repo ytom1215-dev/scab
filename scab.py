@@ -254,13 +254,10 @@ def calculate_scab_risk(p_date, weather_df, b_temp, g_start, g_end,
 
 # ========== 日付軸ユーティリティ ==========
 def apply_date_axis(ax, span_days=None):
-    if span_days is None or span_days <= 30:
-        locator = mdates.DayLocator(interval=3)
-    elif span_days <= 90:
-        locator = mdates.WeekdayLocator(byweekday=0)
-    else:
-        locator = mdates.MonthLocator()
-
+    """
+    X軸の日付ラベルを10日間隔で固定する。
+    """
+    locator = mdates.DayLocator(interval=10)
     ax.xaxis.set_major_locator(locator)
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
     for lbl in ax.get_xticklabels():
