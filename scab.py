@@ -21,8 +21,8 @@ LOCATIONS = {
     "カスタム入力":      None,
 }
 
-THRESHOLD_HIGH_DEFAULT      = 30
-THRESHOLD_MED_DEFAULT       = 80
+THRESHOLD_HIGH_DEFAULT       = 30
+THRESHOLD_MED_DEFAULT        = 80
 ANTECEDENT_RELIEF_MM_DEFAULT = 20
 
 st.set_page_config(page_title="そうか病 感染リスク判定・期間分析", layout="wide")
@@ -31,7 +31,8 @@ st.markdown("""
 マルチ栽培を前提とし、植え付け日からの積算温度で塊茎の初期肥大期を推定します。  
 **積算温度が設定GDD閾値**の期間を「感染リスク期」とし、その間の降水量でリスクを判定します。  
 ⚠️ **判定基準**: そうか病は乾燥条件で感染拡大するため、リスク期の**降水量が少ないほど高リスク**と判定します。  
-💧 **先行降水量補正**: 植え付け前の降水量が多い場合、初期土壌水分が高いとみなしリスクを1段階軽減します。
+💧 **先行降水補正**: 植え付け前の降水量が多い場合、初期土壌水分が高いとみなしリスクを1段階軽減します。  
+❄️ **低温補正**: リスク期に地温（日平均気温）が低い日が続く場合、病原菌の活動が抑制されるためリスクを1段階軽減します。
 """)
 
 # ========== サイドバー ==========
@@ -81,20 +82,15 @@ gdd_end   = st.sidebar.number_input("終了 GDD", value=600, step=10)
 st.sidebar.divider()
 st.sidebar.header("🌧️ リスク判定閾値（降水量）")
 st.sidebar.caption(
-    "⬇️ 降水量が**少ない**ほど感染リスクが高くなります。\n\n"
-    "- 積算降水量 < 高リスク上限 → **高リスク（乾燥）**\n"
-    "- 高リスク上限 ≦ 降水量 < 中リスク上限 → **中リスク**\n"
-    "- 中リスク上限 ≦ 降水量 → **低リスク（湿潤）**"
+    "⬇️ 降水量が**少ない**ほど感染リスクが高くなります。"
 )
 threshold_high = st.sidebar.number_input(
     "高リスク上限 (mm) ← これ未満で高リスク",
-    value=THRESHOLD_HIGH_DEFAULT,
-    help=f"リスク期の積算降水量がこの値未満の場合「高リスク」と判定（デフォルト: {THRESHOLD_HIGH_DEFAULT}mm）"
+    value=THRESHOLD_HIGH_DEFAULT
 )
 threshold_med = st.sidebar.number_input(
     "中リスク上限 (mm) ← これ未満で中リスク",
-    value=THRESHOLD_MED_DEFAULT,
-    help=f"積算降水量がこの値未満（かつ高リスク上限以上）の場合「中リスク」と判定（デフォルト: {THRESHOLD_MED_DEFAULT}mm）"
+    value=THRESHOLD_MED_DEFAULT
 )
 if threshold_high >= threshold_med:
     st.sidebar.error("⚠️ 高リスク上限は中リスク上限より小さい値を設定してください。")
@@ -103,30 +99,29 @@ st.sidebar.divider()
 
 # ===== 先行降水量設定 =====
 st.sidebar.header("💧 先行降水量補正")
-use_antecedent = st.sidebar.checkbox(
-    "先行降水量補正を使用する",
-    value=True,
-    help="植え付け前N日間の降水量が多い場合、初期土壌水分が十分と判断しリスクを1段階軽減します。"
-)
+use_antecedent = st.sidebar.checkbox("先行降水量補正を使用する", value=True)
 if use_antecedent:
-    antecedent_days = st.sidebar.number_input(
-        "集計期間（日）",
-        min_value=1, max_value=30, value=7, step=1,
-        help="植え付け日の何日前まで遡って降水量を集計するか。"
-    )
-    antecedent_relief_mm = st.sidebar.number_input(
-        "軽減閾値 (mm) ← これ以上で1段階軽減",
-        min_value=0, max_value=200, value=ANTECEDENT_RELIEF_MM_DEFAULT, step=5,
-        help=f"先行降水量がこの値以上の場合、リスクを1段階下げます（デフォルト: {ANTECEDENT_RELIEF_MM_DEFAULT}mm）"
-    )
-    st.sidebar.caption(
-        f"植え付け前 **{antecedent_days}日間** の積算降水量 ≧ {antecedent_relief_mm}mm の場合、\n"
-        "「高→中」または「中→低」へリスクを1段階軽減します。\n"
-        "（低リスクはそれ以上軽減しません）"
-    )
+    antecedent_days = st.sidebar.number_input("集計期間（日）", min_value=1, max_value=30, value=7, step=1)
+    antecedent_relief_mm = st.sidebar.number_input("軽減閾値 (mm)", min_value=0, max_value=200, value=ANTECEDENT_RELIEF_MM_DEFAULT, step=5)
 else:
     antecedent_days      = 7
     antecedent_relief_mm = ANTECEDENT_RELIEF_MM_DEFAULT
+
+st.sidebar.divider()
+
+# ===== 低温補正設定 =====
+st.sidebar.header("❄️ 低温補正 (地温考慮)")
+use_low_temp = st.sidebar.checkbox(
+    "低温補正を使用する", 
+    value=True, 
+    help="リスク期に日平均気温が低い日が一定数ある場合、病原菌の活動低下を見込んでリスクを1段階軽減します。"
+)
+if use_low_temp:
+    low_temp_threshold = st.sidebar.number_input("低温基準 (℃)", value=10.0, step=0.5, help="この温度以下の日をカウントします")
+    low_temp_days = st.sidebar.number_input("軽減に必要な日数 (日)", min_value=1, max_value=30, value=3, step=1, help="リスク期内にこの日数以上、低温基準以下の日があれば補正します")
+else:
+    low_temp_threshold = 10.0
+    low_temp_days = 3
 
 
 # ========== データ取得 ==========
@@ -147,7 +142,6 @@ def _fetch_forecast(lat, lon, start, end):
     return requests.get(url, timeout=15).json()
 
 def fetch_weather_data(lat, lon, start_date, end_analysis_date=None, pre_fetch_days=30):
-    """先行降水量計算のため start_date の pre_fetch_days 日前から取得する"""
     fetch_start = start_date - timedelta(days=pre_fetch_days)
     fetch_end   = (end_analysis_date if end_analysis_date else start_date) + timedelta(days=150)
     today       = date.today()
@@ -182,7 +176,8 @@ RISK_MAP = {
 }
 
 def calculate_scab_risk(p_date, weather_df, b_temp, g_start, g_end,
-                        t_high, t_med, use_ante, ante_days, ante_relief_mm):
+                        t_high, t_med, use_ante, ante_days, ante_relief_mm,
+                        use_temp, temp_thresh, temp_days):
     df_after = weather_df[weather_df['time'] >= pd.Timestamp(p_date)].copy()
     if df_after.empty:
         return None
@@ -201,8 +196,11 @@ def calculate_scab_risk(p_date, weather_df, b_temp, g_start, g_end,
 
     risk_df      = df_after[(df_after['time'] >= start_date_w) & (df_after['time'] <= end_date_w)]
     total_precip = risk_df['precipitation_sum'].sum()
+    
+    # 低温日数のカウント
+    low_temp_count = (risk_df['temperature_2m_mean'] <= temp_thresh).sum() if not risk_df.empty else 0
 
-    # 先行降水量（植え付け日の ante_days 日前まで）
+    # 先行降水量
     ante_start_ts     = pd.Timestamp(p_date) - timedelta(days=ante_days)
     ante_end_ts       = pd.Timestamp(p_date) - timedelta(days=1)
     ante_df           = weather_df[(weather_df['time'] >= ante_start_ts) & (weather_df['time'] <= ante_end_ts)]
@@ -217,14 +215,20 @@ def calculate_scab_risk(p_date, weather_df, b_temp, g_start, g_end,
     else:
         base_risk_v = 0
 
-    # 先行降水量補正（1段階軽減）
+    # 補正の適用（それぞれ独立して1段階下げる、最低0）
+    relief_points = 0
+    ante_corrected = False
+    temp_corrected = False
+    
     if use_ante and ante_available and antecedent_precip >= ante_relief_mm:
-        corrected_risk_v = max(0, base_risk_v - 1)
-        ante_corrected   = True
-    else:
-        corrected_risk_v = base_risk_v
-        ante_corrected   = False
+        relief_points += 1
+        ante_corrected = True
+        
+    if use_temp and low_temp_count >= temp_days:
+        relief_points += 1
+        temp_corrected = True
 
+    corrected_risk_v = max(0, base_risk_v - relief_points)
     risk_l, risk_c = RISK_MAP[corrected_risk_v]
 
     return {
@@ -235,8 +239,10 @@ def calculate_scab_risk(p_date, weather_df, b_temp, g_start, g_end,
         'reached_end':        reached_end,
         'total_precip':       total_precip,
         'antecedent_precip':  antecedent_precip,
+        'low_temp_count':     low_temp_count,
         'ante_available':     ante_available,
         'ante_corrected':     ante_corrected,
+        'temp_corrected':     temp_corrected,
         'base_risk_value':    base_risk_v,
         'risk_value':         corrected_risk_v,
         'risk_level':         risk_l,
@@ -248,14 +254,10 @@ def calculate_scab_risk(p_date, weather_df, b_temp, g_start, g_end,
 
 # ========== 日付軸ユーティリティ ==========
 def apply_date_axis(ax, span_days=None):
-    """
-    X軸の日付ラベルを最低3日間隔で設定する。
-    span_days を渡すと自動でロケーターを選択する。
-    """
     if span_days is None or span_days <= 30:
         locator = mdates.DayLocator(interval=3)
     elif span_days <= 90:
-        locator = mdates.WeekdayLocator(byweekday=0)   # 毎週月曜
+        locator = mdates.WeekdayLocator(byweekday=0)
     else:
         locator = mdates.MonthLocator()
 
@@ -278,8 +280,7 @@ def plot_period_analysis(results_df, t_high, t_med):
 
     df_plot = results_df[results_df['status'] == '判定完了'].copy()
     if df_plot.empty:
-        ax.text(0.5, 0.5, "判定を完了した日がありません",
-                color="white", fontsize=15, ha='center', va='center')
+        ax.text(0.5, 0.5, "判定を完了した日がありません", color="white", fontsize=15, ha='center', va='center')
         return fig
 
     df_plot['planting_date'] = pd.to_datetime(df_plot['planting_date'])
@@ -290,13 +291,20 @@ def plot_period_analysis(results_df, t_high, t_med):
     ax.plot(df_plot['planting_date'], df_plot['total_precip'],
             color="white", alpha=0.3, linestyle="-", linewidth=1.5, zorder=2)
 
-    # 補正あり点を◇で重ね描き
+    # 補正マーカー
     if 'ante_corrected' in df_plot.columns:
-        corrected = df_plot[df_plot['ante_corrected'] == True]
-        if not corrected.empty:
-            ax.scatter(corrected['planting_date'], corrected['total_precip'],
-                       marker='D', s=90, edgecolors='white', facecolors='none',
-                       linewidths=1.3, zorder=4)
+        a_corr = df_plot[df_plot['ante_corrected'] == True]
+        if not a_corr.empty:
+            ax.scatter(a_corr['planting_date'], a_corr['total_precip'],
+                       marker='D', s=100, edgecolors='white', facecolors='none',
+                       linewidths=1.2, zorder=4, alpha=0.9)
+                       
+    if 'temp_corrected' in df_plot.columns:
+        t_corr = df_plot[df_plot['temp_corrected'] == True]
+        if not t_corr.empty:
+            ax.scatter(t_corr['planting_date'], t_corr['total_precip'],
+                       marker='s', s=130, edgecolors='cyan', facecolors='none',
+                       linewidths=1.5, zorder=5, alpha=0.9)
 
     # 閾値ライン
     x_min = df_plot['planting_date'].min()
@@ -308,8 +316,6 @@ def plot_period_analysis(results_df, t_high, t_med):
     ax.set_ylabel("リスク期内の積算降水量 (mm)  ※少ないほど高リスク", color="white")
     ax.set_xlabel("植え付け日", color="white")
     ax.yaxis.label.set_color("white")
-
-    # ===== 3日以上間隔の日付軸 =====
     apply_date_axis(ax, span_days=span_days)
 
     # 凡例
@@ -319,10 +325,10 @@ def plot_period_analysis(results_df, t_high, t_med):
         mpatches.Patch(color="#0068C9", label="低リスク (Low)：湿潤"),
     ]
     if 'ante_corrected' in df_plot.columns and df_plot['ante_corrected'].any():
-        handles.append(
-            mlines.Line2D([], [], marker='D', color='white', markerfacecolor='none',
-                          markersize=8, label="先行降水量補正あり", linestyle='None')
-        )
+        handles.append(mlines.Line2D([], [], marker='D', color='white', markerfacecolor='none', markersize=8, label="先行降水量補正あり", linestyle='None'))
+    if 'temp_corrected' in df_plot.columns and df_plot['temp_corrected'].any():
+        handles.append(mlines.Line2D([], [], marker='s', color='cyan', markerfacecolor='none', markersize=9, label="低温補正あり", linestyle='None'))
+        
     ax.legend(handles=handles, loc="best", facecolor="#1a1d24", labelcolor="white")
 
     plt.tight_layout()
@@ -332,18 +338,19 @@ def plot_period_analysis(results_df, t_high, t_med):
 # ========== CSV生成 ==========
 def build_csv(results_df: pd.DataFrame, ante_days: int) -> bytes:
     cols_src = ['planting_date', 'start_date_w', 'end_date_w', 'reached_end',
-                'antecedent_precip', 'ante_corrected', 'total_precip',
-                'base_risk_value', 'risk_level']
+                'antecedent_precip', 'ante_corrected', 'low_temp_count', 'temp_corrected',
+                'total_precip', 'base_risk_value', 'risk_level']
     avail   = [c for c in cols_src if c in results_df.columns]
     show_df = results_df[results_df['status'] == '判定完了'][avail].copy()
 
     date_cols = ['planting_date', 'start_date_w', 'end_date_w']
     for c in date_cols:
         if c in show_df: show_df[c] = pd.to_datetime(show_df[c]).dt.strftime('%Y/%m/%d')
-    if 'reached_end'       in show_df: show_df['reached_end']       = show_df['reached_end'].map({True: '到達', False: '未到達'})
-    if 'ante_corrected'    in show_df: show_df['ante_corrected']    = show_df['ante_corrected'].map({True: '補正あり', False: '-'})
-    if 'total_precip'      in show_df: show_df['total_precip']      = show_df['total_precip'].round(1)
-    if 'antecedent_precip' in show_df: show_df['antecedent_precip'] = show_df['antecedent_precip'].round(1)
+    if 'reached_end'        in show_df: show_df['reached_end']        = show_df['reached_end'].map({True: '到達', False: '未到達'})
+    if 'ante_corrected'     in show_df: show_df['ante_corrected']     = show_df['ante_corrected'].map({True: '補正あり', False: '-'})
+    if 'temp_corrected'     in show_df: show_df['temp_corrected']     = show_df['temp_corrected'].map({True: '補正あり', False: '-'})
+    if 'total_precip'       in show_df: show_df['total_precip']       = show_df['total_precip'].round(1)
+    if 'antecedent_precip'  in show_df: show_df['antecedent_precip']  = show_df['antecedent_precip'].round(1)
 
     show_df.rename(columns={
         'planting_date':    '植え付け日',
@@ -351,7 +358,9 @@ def build_csv(results_df: pd.DataFrame, ante_days: int) -> bytes:
         'end_date_w':       'リスク期終了日',
         'reached_end':      'GDD終了閾値到達',
         'antecedent_precip': f'先行{ante_days}日間降水量(mm)',
-        'ante_corrected':   '先行降水量補正',
+        'ante_corrected':   '先行降水補正',
+        'low_temp_count':   'リスク期 低温日数(日)',
+        'temp_corrected':   '低温補正',
         'total_precip':     'リスク期積算降水量(mm)',
         'base_risk_value':  '基本リスク値(補正前)',
         'risk_level':       'リスクレベル(補正後)',
@@ -381,7 +390,8 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
         res = calculate_scab_risk(
             planting_date, weather_df, base_temp, gdd_start, gdd_end,
             threshold_high, threshold_med,
-            use_antecedent, antecedent_days, antecedent_relief_mm
+            use_antecedent, antecedent_days, antecedent_relief_mm,
+            use_low_temp, low_temp_threshold, low_temp_days
         )
         if res is None or res['status'] != '判定完了':
             st.warning("指定日のデータが不足しているか、リスク期に達していません。")
@@ -395,34 +405,25 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
         col2.metric("リスク期 終了", res['end_date_w'].strftime('%Y/%m/%d'),
                     f"{gdd_end} GDD" if res['reached_end'] else "進行中")
         col3.metric("リスク期 積算降水量", f"{res['total_precip']:.1f} mm")
-        col4.metric(f"先行{antecedent_days}日間 降水量",
+        col4.metric(f"リスク期 {low_temp_threshold}℃以下の日数", f"{res['low_temp_count']} 日")
+        col5.metric(f"先行{antecedent_days}日間 降水量",
                     f"{res['antecedent_precip']:.1f} mm" if res['ante_available'] else "データなし")
-        col5.metric("ベース温度", f"{base_temp} ℃")
 
-        # 先行降水量補正の通知
-        if use_antecedent:
-            if not res['ante_available']:
-                st.warning(f"⚠️ 先行{antecedent_days}日間の気象データが不足しているため補正を適用できませんでした。")
-            elif res['ante_corrected']:
-                base_name = RISK_MAP[res['base_risk_value']][0]
-                st.success(
-                    f"💧 先行{antecedent_days}日間の降水量 **{res['antecedent_precip']:.1f}mm** ≥ {antecedent_relief_mm}mm のため、"
-                    f"リスクを **{base_name} → {res['risk_level']}** に1段階軽減しました。"
-                )
-            else:
-                st.info(
-                    f"💧 先行{antecedent_days}日間の降水量: **{res['antecedent_precip']:.1f}mm**"
-                    f"（軽減閾値 {antecedent_relief_mm}mm 未満のため補正なし）"
-                )
+        # 補正の通知
+        if use_antecedent and res['ante_corrected']:
+            st.success(f"💧 先行{antecedent_days}日間の降水量 **{res['antecedent_precip']:.1f}mm** ≥ {antecedent_relief_mm}mm のため、リスクを軽減しました。")
+            
+        if use_low_temp and res['temp_corrected']:
+            st.success(f"❄️ リスク期に {low_temp_threshold}℃以下の日が **{res['low_temp_count']}日**（基準{low_temp_days}日以上）あったため、病菌活動低下とみなしリスクを軽減しました。")
 
         # リスクカード
         st.markdown(f"""
         <div style="background-color:{res['risk_color']}18; border-left:5px solid {res['risk_color']};
                     padding:15px; border-radius:5px; margin-top:10px;">
-            <h3 style="color:{res['risk_color']}; margin:0;">リスクレベル: {res['risk_level']}</h3>
+            <h3 style="color:{res['risk_color']}; margin:0;">最終判定: {res['risk_level']}</h3>
             <p style="margin-top:8px; font-size:15px;">
-                リスク期積算降水量: {res['total_precip']:.1f} mm
-                （高リスク上限: {threshold_high}mm ／ 中リスク上限: {threshold_med}mm）
+                リスク期積算降水量: {res['total_precip']:.1f} mm ／ 
+                基本リスク(補正前): {RISK_MAP[res['base_risk_value']][0]}
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -480,20 +481,20 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
 
         ax2.set_ylabel("日降水量 (mm)", color="white")
         ax2.set_xlabel("日付", color="white")
-
-        # ===== 3日以上間隔の日付軸（sharex なので ax2 に適用すれば ax1 にも反映） =====
         apply_date_axis(ax2, span_days=plot_span)
         plt.tight_layout()
         st.pyplot(fig)
 
         # 単一日CSV
         single_csv = pd.DataFrame([{
-            '植え付け日':                          planting_date.strftime('%Y/%m/%d'),
-            'リスク期開始日':                      res['start_date_w'].strftime('%Y/%m/%d'),
-            'リスク期終了日':                      res['end_date_w'].strftime('%Y/%m/%d'),
-            'GDD終了閾値到達':                     '到達' if res['reached_end'] else '未到達',
+            '植え付け日':                           planting_date.strftime('%Y/%m/%d'),
+            'リスク期開始日':                       res['start_date_w'].strftime('%Y/%m/%d'),
+            'リスク期終了日':                       res['end_date_w'].strftime('%Y/%m/%d'),
+            'GDD終了閾値到達':                      '到達' if res['reached_end'] else '未到達',
             f'先行{antecedent_days}日間降水量(mm)': round(res['antecedent_precip'], 1),
-            '先行降水量補正':                      '補正あり' if res['ante_corrected'] else '-',
+            '先行降水補正':                         '補正あり' if res['ante_corrected'] else '-',
+            'リスク期 低温日数(日)':                res['low_temp_count'],
+            '低温補正':                             '補正あり' if res['temp_corrected'] else '-',
             'リスク期積算降水量(mm)':               round(res['total_precip'], 1),
             '基本リスク値(補正前)':                 res['base_risk_value'],
             'リスクレベル(補正後)':                 res['risk_level'],
@@ -522,7 +523,8 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
             res = calculate_scab_risk(
                 p_date, weather_df, base_temp, gdd_start, gdd_end,
                 threshold_high, threshold_med,
-                use_antecedent, antecedent_days, antecedent_relief_mm
+                use_antecedent, antecedent_days, antecedent_relief_mm,
+                use_low_temp, low_temp_threshold, low_temp_days
             )
             if res: results_list.append(res)
             if i % update_interval == 0:
@@ -535,12 +537,11 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
             st.stop()
 
         st.subheader("📈 植え付け日による感染リスクの変化")
-        st.info("ℹ️ グラフの **縦軸（積算降水量）が低いほど高リスク**（乾燥条件）。赤い点=高リスク、◇=先行降水量補正あり。")
+        st.info("ℹ️ グラフの **縦軸（積算降水量）が低いほど高リスク**（乾燥条件）。\n\n赤い点=高リスク、◇=先行降水量補正あり、□=低温補正あり。")
 
         fig_period = plot_period_analysis(results_df, threshold_high, threshold_med)
         st.pyplot(fig_period)
 
-        # CSVダウンロード＋サマリー
         csv_data = build_csv(results_df, antecedent_days)
         filename = (f"scab_risk_period_{planting_date.strftime('%Y%m%d')}"
                     f"_{analysis_end_date.strftime('%Y%m%d')}_{loc_name}.csv")
@@ -559,17 +560,19 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
                 high_n = (completed['risk_value'] == 2).sum()
                 med_n  = (completed['risk_value'] == 1).sum()
                 low_n  = (completed['risk_value'] == 0).sum()
-                corr_n = int(completed['ante_corrected'].sum()) if 'ante_corrected' in completed.columns else 0
+                corr_a = int(completed['ante_corrected'].sum()) if 'ante_corrected' in completed.columns else 0
+                corr_t = int(completed['temp_corrected'].sum()) if 'temp_corrected' in completed.columns else 0
                 st.markdown(
                     f"分析完了: **{len(completed)}日分** ／ "
                     f"🔴 高リスク: **{high_n}日** ／ "
                     f"🟠 中リスク: **{med_n}日** ／ "
-                    f"🔵 低リスク: **{low_n}日**"
-                    + (f" ／ 💧 先行降水量補正適用: **{corr_n}日**" if use_antecedent else "")
+                    f"🔵 低リスク: **{low_n}日**\n\n"
+                    f"（💧 先行降水補正: **{corr_a}日** ／ ❄️ 低温補正: **{corr_t}日**）"
                 )
 
         with st.expander("📋 分析結果の詳細データテーブル"):
-            disp_cols = ['planting_date', 'antecedent_precip', 'ante_corrected',
+            disp_cols = ['planting_date', 'antecedent_precip', 'ante_corrected', 
+                         'low_temp_count', 'temp_corrected',
                          'total_precip', 'risk_level', 'start_date_w', 'end_date_w', 'reached_end']
             disp_cols = [c for c in disp_cols if c in completed.columns]
             show_df   = completed[disp_cols].copy()
@@ -577,15 +580,18 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
             date_cols2 = ['planting_date', 'start_date_w', 'end_date_w']
             for c in date_cols2:
                 if c in show_df: show_df[c] = pd.to_datetime(show_df[c]).dt.strftime('%Y/%m/%d')
-            if 'reached_end'       in show_df: show_df['reached_end']       = show_df['reached_end'].map({True: '到達', False: '未到達'})
-            if 'ante_corrected'    in show_df: show_df['ante_corrected']    = show_df['ante_corrected'].map({True: '補正あり', False: '-'})
-            if 'total_precip'      in show_df: show_df['total_precip']      = show_df['total_precip'].round(1)
-            if 'antecedent_precip' in show_df: show_df['antecedent_precip'] = show_df['antecedent_precip'].round(1)
+            if 'reached_end'        in show_df: show_df['reached_end']        = show_df['reached_end'].map({True: '到達', False: '未到達'})
+            if 'ante_corrected'     in show_df: show_df['ante_corrected']     = show_df['ante_corrected'].map({True: '補正あり', False: '-'})
+            if 'temp_corrected'     in show_df: show_df['temp_corrected']     = show_df['temp_corrected'].map({True: '補正あり', False: '-'})
+            if 'total_precip'       in show_df: show_df['total_precip']       = show_df['total_precip'].round(1)
+            if 'antecedent_precip'  in show_df: show_df['antecedent_precip']  = show_df['antecedent_precip'].round(1)
 
             show_df.rename(columns={
                 'planting_date':    '植え付け日',
                 'antecedent_precip': f'先行{antecedent_days}日間降水量(mm)',
-                'ante_corrected':   '先行降水量補正',
+                'ante_corrected':   '先行降水補正',
+                'low_temp_count':   'リスク期 低温日数(日)',
+                'temp_corrected':   '低温補正',
                 'total_precip':     'リスク期 降水量(mm)',
                 'risk_level':       'リスクレベル(補正後)',
                 'start_date_w':     'リスク期 開始日',
