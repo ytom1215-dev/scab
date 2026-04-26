@@ -9,6 +9,7 @@ import japanize_matplotlib
 import matplotlib.patches as mpatches
 import matplotlib.lines as mlines
 import matplotlib.dates as mdates
+import io
 
 # --- 地点プリセット ---
 LOCATIONS = {
@@ -36,6 +37,19 @@ st.markdown("""
 """)
 
 # ========== サイドバー ==========
+st.sidebar.header("📡 データソース設定")
+data_source = st.sidebar.radio(
+    "気象データの取得元を選択",
+    ["Open-Meteo (API自動取得)", "AMeDAS (CSVアップロード)"]
+)
+
+uploaded_csv = None
+if data_source == "AMeDAS (CSVアップロード)":
+    st.sidebar.info("💡 **CSV形式の注意**: 1行目にヘッダーがあり、列名に「日」「気温」「降水」が含まれるデータを推奨します。（文字コードはUTF-8またはShift-JIS）")
+    uploaded_csv = st.sidebar.file_uploader("AMeDASの気象データ (CSV) をアップロード", type=["csv"])
+
+st.sidebar.divider()
+
 st.sidebar.header("🗺️ 分析モードと地点")
 
 analysis_mode = st.sidebar.radio(
@@ -124,7 +138,7 @@ else:
     low_temp_days = 3
 
 
-# ========== データ取得 ==========
+# ========== データ取得・パース ==========
 DAILY_PARAMS = "temperature_2m_mean,precipitation_sum"
 
 @st.cache_data(ttl=259200)
@@ -166,6 +180,58 @@ def fetch_weather_data(lat, lon, start_date, end_analysis_date=None, pre_fetch_d
     df = pd.concat(frames).drop_duplicates('time').sort_values('time')
     df['time'] = pd.to_datetime(df['time'])
     return df
+
+def parse_amedas_csv(uploaded_file):
+    """
+    アップロードされたCSVから日付、平均気温、降水量を抽出し、
+    Open-Meteoと同じデータフレーム形式に整える。
+    """
+    try:
+        # Shift-JIS (気象庁デフォルト) を試行、ダメならUTF-8
+        try:
+            df = pd.read_csv(uploaded_file, encoding="shift_jis")
+        except UnicodeDecodeError:
+            uploaded_file.seek(0)
+            df = pd.read_csv(uploaded_file, encoding="utf-8")
+        
+        # カラム名の柔軟なマッチング
+        time_col = None
+        temp_col = None
+        precip_col = None
+
+        for col in df.columns:
+            c_str = str(col).lower()
+            if not time_col and any(k in c_str for k in ["年", "月", "日", "time", "date", "日時"]):
+                time_col = col
+            elif not temp_col and any(k in c_str for k in ["気温", "temp"]):
+                temp_col = col
+            elif not precip_col and any(k in c_str for k in ["降水", "precip", "雨"]):
+                precip_col = col
+
+        if not (time_col and temp_col and precip_col):
+            raise ValueError(f"CSVから必要な列を特定できませんでした。現在の列名: {list(df.columns)}")
+
+        df = df.rename(columns={
+            time_col: 'time',
+            temp_col: 'temperature_2m_mean',
+            precip_col: 'precipitation_sum'
+        })
+        
+        # データのクレンジング
+        df['time'] = pd.to_datetime(df['time'], errors='coerce')
+        # 気象庁データの欠損値記号等を除去して数値化
+        df['temperature_2m_mean'] = pd.to_numeric(df['temperature_2m_mean'].replace(r'[^\d\.-]', '', regex=True), errors='coerce')
+        df['precipitation_sum'] = pd.to_numeric(df['precipitation_sum'].replace(r'[^\d\.-]', '', regex=True), errors='coerce')
+        
+        df = df.dropna(subset=['time']).sort_values('time').reset_index(drop=True)
+        
+        if df.empty:
+            raise ValueError("有効な気象データ行が見つかりませんでした。")
+            
+        return df
+
+    except Exception as e:
+        raise Exception(f"CSV読み込みエラー: {str(e)}")
 
 
 # ========== リスク計算 ==========
@@ -373,14 +439,24 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
         st.stop()
 
     with st.spinner("気象データを取得・解析中..."):
-        try:
-            weather_df = fetch_weather_data(
-                lat, lon, planting_date, analysis_end_date,
-                pre_fetch_days=antecedent_days + 5
-            )
-        except Exception as e:
-            st.error(f"気象データ取得エラー: {e}")
-            st.stop()
+        if data_source == "Open-Meteo (API自動取得)":
+            try:
+                weather_df = fetch_weather_data(
+                    lat, lon, planting_date, analysis_end_date,
+                    pre_fetch_days=antecedent_days + 5
+                )
+            except Exception as e:
+                st.error(f"気象データ取得エラー (Open-Meteo): {e}")
+                st.stop()
+        else:
+            if uploaded_csv is None:
+                st.error("⚠️ AMeDASデータのCSVファイルがアップロードされていません。サイドバーからアップロードしてください。")
+                st.stop()
+            try:
+                weather_df = parse_amedas_csv(uploaded_csv)
+            except Exception as e:
+                st.error(e)
+                st.stop()
 
     # ─── 単一日の判定 ───────────────────────────
     if analysis_mode == "単一日の判定":
