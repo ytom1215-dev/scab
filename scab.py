@@ -553,51 +553,89 @@ def plot_period_analysis(results_df, t_high, t_med, title_suffix=""):
 # ============================================================
 # [FIX U1] 複数年重ね書き比較グラフ
 # ============================================================
-def plot_multiyear_overlay(results_df, t_high, t_med, compare_years, start_md_date):
+def plot_multiyear_overlay(results_df, t_high, t_med, compare_years, start_md_date,
+                           bw_mode: bool = False):
     """
     全年を同一グラフに重ね書き（x軸=月日）。
-    白背景 + モノクロ印刷対応（マーカー形状・線種の組み合わせで識別）。
+    bw_mode=False : 通常（ダーク背景・カラー）
+    bw_mode=True  : 白黒印刷用（白背景・グレースケール・マーカー形状・線種で識別）
     """
-    # --- 白黒印刷対応スタイル定義 ---
-    # マーカー: matplotlib の標準記号名（filled/open を交互に使用）
+
+    # ===================== スタイル定義 =====================
+    # --- 白黒印刷用：マーカー形状 × 線種 × グレー濃度 ---
     BW_STYLES = [
-        # (linestyle,       linewidth, marker,    markersize, fillstyle)
-        ("-",               1.8,       "o",        7,          "none"),    # ○ 実線
-        ("--",              1.8,       "v",        8,          "none"),    # ▽ 破線
-        ("-.",              1.8,       "s",        7,          "none"),    # □ 一点鎖線
-        (":",               2.0,       "D",        7,          "none"),    # ◇ 点線
-        ("-",               1.8,       "^",        8,          "full"),    # ▲ 実線（塗り）
-        ("--",              1.8,       "o",        7,          "full"),    # ● 破線（塗り）
-        ("-.",              1.8,       "P",        8,          "none"),    # ✚ 一点鎖線
-        (":",               2.0,       "X",        8,          "none"),    # ✕ 点線
-        ("-",               1.8,       "h",        8,          "none"),    # ⬡ 実線
-        ("--",              2.0,       "D",        7,          "full"),    # ◆ 破線（塗り）
+        # (linestyle, linewidth, marker, markersize, fillstyle)
+        ("-",   1.8, "o", 7, "none"),   # ○ 実線
+        ("--",  1.8, "v", 8, "none"),   # ▽ 破線
+        ("-.",  1.8, "s", 7, "none"),   # □ 一点鎖線
+        (":",   2.0, "D", 7, "none"),   # ◇ 点線
+        ("-",   1.8, "^", 8, "full"),   # ▲ 実線（塗り）
+        ("--",  1.8, "o", 7, "full"),   # ● 破線（塗り）
+        ("-.",  1.8, "P", 8, "none"),   # ✚ 一点鎖線
+        (":",   2.0, "X", 8, "none"),   # ✕ 点線
+        ("-",   1.8, "h", 8, "none"),   # ⬡ 実線
+        ("--",  2.0, "D", 7, "full"),   # ◆ 破線（塗り）
     ]
-    # グレースケール: 黒〜濃灰〜中灰（白背景上で判別できる範囲）
-    GRAY_LEVELS = [
-        "#000000",  # 黒
-        "#333333",
-        "#555555",
-        "#777777",
-        "#111111",
-        "#444444",
-        "#222222",
-        "#666666",
-        "#888888",
-        "#1a1a1a",
+    BW_GRAYS = ["#000000", "#333333", "#555555", "#777777",
+                "#111111", "#444444", "#222222", "#666666", "#888888", "#1a1a1a"]
+
+    # --- 通常用：カラー ---
+    COLOR_STYLES = [
+        ("-",  1.8, "o", 7, "none"),
+        ("--", 1.8, "v", 8, "none"),
+        ("-.", 1.8, "s", 7, "none"),
+        (":",  2.0, "D", 7, "none"),
+        ("-",  1.8, "^", 8, "full"),
+        ("--", 1.8, "o", 7, "full"),
+        ("-.", 1.8, "P", 8, "none"),
+        (":",  2.0, "X", 8, "none"),
+        ("-",  1.8, "h", 8, "none"),
+        ("--", 2.0, "D", 7, "full"),
+    ]
+    COLOR_PALETTE = [
+        "#4fc3f7", "#ef5350", "#66bb6a", "#ffa726",
+        "#ab47bc", "#26c6da", "#ff7043", "#d4e157",
+        "#ec407a", "#42a5f5",
     ]
 
+    # ===================== 背景・軸の設定 =====================
     fig, ax = plt.subplots(figsize=(13, 6))
-    # --- 白背景 ---
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
-    ax.tick_params(colors="black")
-    ax.xaxis.label.set_color("black")
-    ax.yaxis.label.set_color("black")
-    ax.title.set_color("black")
-    for spine in ax.spines.values():
-        spine.set_color("#aaaaaa")
 
+    if bw_mode:
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
+        fg_main  = "black"
+        fg_sub   = "#555555"
+        spine_c  = "#aaaaaa"
+        grid_c   = "#dddddd"
+        leg_face = "white"
+        leg_edge = "#aaaaaa"
+        h_line_color  = "black"
+        h_line_style  = ":"
+        m_line_color  = "#555555"
+        m_line_style  = "--"
+    else:
+        fig.patch.set_facecolor("#0e1117")
+        ax.set_facecolor("#1a1d24")
+        fg_main  = "white"
+        fg_sub   = "#cccccc"
+        spine_c  = "#444444"
+        grid_c   = "#2a2d34"
+        leg_face = "#1a1d24"
+        leg_edge = "#444444"
+        h_line_color  = "#FF4B4B"
+        h_line_style  = ":"
+        m_line_color  = "#FFA500"
+        m_line_style  = ":"
+
+    ax.tick_params(colors=fg_main)
+    ax.xaxis.label.set_color(fg_main)
+    ax.yaxis.label.set_color(fg_main)
+    ax.title.set_color(fg_main)
+    for spine in ax.spines.values():
+        spine.set_color(spine_c)
+
+    # ===================== 年ごとのプロット =====================
     legend_handles = []
 
     for i, y in enumerate(sorted(compare_years)):
@@ -610,73 +648,74 @@ def plot_multiyear_overlay(results_df, t_high, t_med, compare_years, start_md_da
             continue
 
         df_y['planting_date'] = pd.to_datetime(df_y['planting_date'])
-        # x軸を統一するため「月日」部分を基準年（2000年）に変換
         df_y['md_date'] = df_y['planting_date'].apply(
             lambda d: d.replace(year=2000) if d.month >= start_md_date.month else d.replace(year=2001)
         )
         df_y = df_y.sort_values('md_date')
 
-        ls, lw, mk, ms, fs = BW_STYLES[i % len(BW_STYLES)]
-        color = GRAY_LEVELS[i % len(GRAY_LEVELS)]
+        if bw_mode:
+            ls, lw, mk, ms, fs = BW_STYLES[i % len(BW_STYLES)]
+            color = BW_GRAYS[i % len(BW_GRAYS)]
+        else:
+            ls, lw, mk, ms, fs = COLOR_STYLES[i % len(COLOR_STYLES)]
+            color = COLOR_PALETTE[i % len(COLOR_PALETTE)]
 
-        ax.plot(
-            df_y['md_date'], df_y['total_precip'],
-            color=color, linestyle=ls, linewidth=lw, alpha=0.9, zorder=3
-        )
-        ax.scatter(
-            df_y['md_date'], df_y['total_precip'],
-            color=color, marker=mk, s=ms ** 2, zorder=4,
-            facecolors=color if fs == "full" else "none",
-            edgecolors=color, linewidths=1.5
-        )
-        # 凡例用ハンドル
+        mfc = color if fs == "full" else "none"
+
+        ax.plot(df_y['md_date'], df_y['total_precip'],
+                color=color, linestyle=ls, linewidth=lw, alpha=0.9, zorder=3)
+        ax.scatter(df_y['md_date'], df_y['total_precip'],
+                   marker=mk, s=ms ** 2, zorder=4,
+                   facecolors=mfc, edgecolors=color, linewidths=1.5)
+
+        season_label = results_df[
+            results_df['target_year'].isin([f"{y}年", f"{y}/{y+1}シーズン"])
+        ]['target_year'].iloc[0]
+
         legend_handles.append(
-            mlines.Line2D(
-                [], [],
-                color=color, linestyle=ls, linewidth=lw,
-                marker=mk, markersize=ms, fillstyle=fs,
-                markerfacecolor=color if fs == "full" else "none",
-                markeredgecolor=color,
-                label=results_df[results_df['target_year'].isin(
-                    [f"{y}年", f"{y}/{y+1}シーズン"])]['target_year'].iloc[0]
-            )
+            mlines.Line2D([], [], color=color, linestyle=ls, linewidth=lw,
+                          marker=mk, markersize=ms, fillstyle=fs,
+                          markerfacecolor=mfc, markeredgecolor=color,
+                          label=season_label)
         )
 
-    # リスク境界線（黒系の破線・点線で印刷対応）
-    ax.axhline(t_high, color="black",   linestyle=":",  linewidth=1.8, alpha=0.85,
-               label=f"高リスク境界 {t_high}mm（以下で高リスク）")
-    ax.axhline(t_med,  color="#555555", linestyle="--", linewidth=1.5, alpha=0.80,
-               label=f"中リスク境界 {t_med}mm（以下で中リスク）")
-    ax.text(ax.get_xlim()[0] if ax.get_xlim()[0] != 0 else pd.Timestamp("2000-01-01").timestamp(),
-            t_high, f" 高リスク境界 {t_high}mm", va='bottom', ha='left',
-            color="black", fontsize=8.5)
-    ax.text(ax.get_xlim()[0] if ax.get_xlim()[0] != 0 else pd.Timestamp("2000-01-01").timestamp(),
-            t_med,  f" 中リスク境界 {t_med}mm",  va='bottom', ha='left',
-            color="#555555", fontsize=8.5)
+    # ===================== リスク境界線 =====================
+    ax.axhline(t_high, color=h_line_color, linestyle=h_line_style, linewidth=1.8, alpha=0.85)
+    ax.axhline(t_med,  color=m_line_color, linestyle=m_line_style, linewidth=1.5, alpha=0.80)
 
+    # 境界線ラベル（x軸左端に注記）
+    xlim = ax.get_xlim()
+    x_label_pos = pd.Timestamp("2000-01-01") + timedelta(days=max(0, int(xlim[0])))
+    ax.annotate(f" 高リスク境界 {t_high}mm", xy=(x_label_pos, t_high),
+                va='bottom', color=h_line_color, fontsize=8.5)
+    ax.annotate(f" 中リスク境界 {t_med}mm",  xy=(x_label_pos, t_med),
+                va='bottom', color=m_line_color, fontsize=8.5)
+
+    legend_handles += [
+        mlines.Line2D([], [], color=h_line_color, linestyle=h_line_style,
+                      linewidth=1.8, label=f"高リスク境界 {t_high}mm"),
+        mlines.Line2D([], [], color=m_line_color, linestyle=m_line_style,
+                      linewidth=1.5, label=f"中リスク境界 {t_med}mm"),
+    ]
+
+    # ===================== 軸・凡例・グリッド =====================
     ax.xaxis.set_major_locator(mdates.DayLocator(interval=10))
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
     for lbl in ax.get_xticklabels():
         lbl.set_rotation(45)
         lbl.set_ha('right')
-        lbl.set_color('black')
+        lbl.set_color(fg_main)
 
     ax.set_ylabel("リスク期内の積算降水量 (mm)  ※少ないほど高リスク")
     ax.set_xlabel("植え付け日（月/日）")
-    ax.set_title("複数年重ね合わせ比較", fontsize=12)
+    mode_label = "【白黒印刷用】" if bw_mode else "【通常】"
+    ax.set_title(f"複数年重ね合わせ比較 {mode_label}", fontsize=12)
 
-    # 境界線の凡例ハンドルを追加
-    legend_handles += [
-        mlines.Line2D([], [], color="black",   linestyle=":",  linewidth=1.8,
-                      label=f"高リスク境界 {t_high}mm"),
-        mlines.Line2D([], [], color="#555555", linestyle="--", linewidth=1.5,
-                      label=f"中リスク境界 {t_med}mm"),
-    ]
     ax.legend(handles=legend_handles, loc="best",
-              facecolor="white", edgecolor="#aaaaaa", labelcolor="black",
-              framealpha=0.9)
+              facecolor=leg_face, edgecolor=leg_edge,
+              labelcolor=fg_main, framealpha=0.92)
+    ax.grid(axis='y', color=grid_c, linewidth=0.7, linestyle='-', zorder=0)
 
-    ax.grid(axis='y', color='#dddddd', linewidth=0.7, linestyle='-')
     plt.tight_layout()
     return fig
 
@@ -1154,7 +1193,17 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
 
         # [FIX U1] 重ね書き比較グラフ
         st.markdown("#### ▼ 全年重ね合わせ比較")
-        fig_overlay = plot_multiyear_overlay(results_df, threshold_high, threshold_med, compare_years, start_md_date)
+        overlay_mode = st.radio(
+            "表示モード",
+            ["🌈 通常（カラー）", "🖨️ 白黒印刷用"],
+            horizontal=True,
+            key="overlay_mode_radio",
+        )
+        bw_mode = (overlay_mode == "🖨️ 白黒印刷用")
+        fig_overlay = plot_multiyear_overlay(
+            results_df, threshold_high, threshold_med, compare_years, start_md_date,
+            bw_mode=bw_mode
+        )
         st.pyplot(fig_overlay)
 
         # 年別グラフ
