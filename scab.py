@@ -436,7 +436,7 @@ def plot_multiyear_overlay(results_df, t_high, t_med, compare_years, start_md_da
     plt.tight_layout()
     return fig
 
-# 🌟気象データ複数年比較グラフ
+# 🌟気象データ複数年比較グラフ (降水量を棒グラフ化)
 def plot_weather_multiyear(weather_df, compare_years, start_md_date, end_md_date, bw_mode=False):
     BW_STYLES, BW_GRAYS = [("-",1.8,"o",7,"none"), ("--",1.8,"v",8,"none"), ("-.",1.8,"s",7,"none"), (":",2.0,"D",7,"none"), ("-",1.8,"^",8,"full")], ["#000000", "#333333", "#555555", "#777777", "#111111"]
     COLOR_STYLES, COLOR_PALETTE = [("-",1.8,"o",7,"none"), ("--",1.8,"v",8,"none"), ("-.",1.8,"s",7,"none"), (":",2.0,"D",7,"none"), ("-",1.8,"^",8,"full")], ["#4fc3f7", "#ef5350", "#66bb6a", "#ffa726", "#ab47bc"]
@@ -483,8 +483,8 @@ def plot_weather_multiyear(weather_df, compare_years, start_md_date, end_md_date
         ax1.plot(df_y['md_date'], df_y['temperature_2m_mean'], color=color, alpha=0.25, linewidth=1, zorder=2) 
         ax1.plot(df_y['md_date'], df_y['temp_ma7'], color=color, linestyle=ls, linewidth=lw, zorder=3)
         
-        # ax2: 降水 (積算ではなく、日ごとの降水量をそのまま表示)
-        ax2.plot(df_y['md_date'], df_y['precipitation_sum'], color=color, linestyle=ls, linewidth=lw, alpha=0.8, zorder=3)
+        # ax2: 降水 (日ごとの降水量を半透明の棒グラフで重ね合わせる)
+        ax2.bar(df_y['md_date'], df_y['precipitation_sum'], width=0.8, color=color, alpha=0.4, edgecolor=color, linewidth=0.5, zorder=3)
 
         season_label = f"{y}/{y+1}シーズン" if is_cross_year else f"{y}年"
         legend_handles.append(mlines.Line2D([], [], color=color, linestyle=ls, linewidth=lw, marker=mk, markersize=ms, fillstyle=fs, markerfacecolor=color if fs=="full" else "none", markeredgecolor=color, label=season_label))
@@ -492,7 +492,6 @@ def plot_weather_multiyear(weather_df, compare_years, start_md_date, end_md_date
     ax1.set_title("平均気温の推移 (太線: 7日移動平均 / 薄線: 日別値)")
     ax1.set_ylabel("平均気温 (℃)")
     
-    # 積算から日降水量への変更に伴うテキスト修正
     ax2.set_title("日降水量の推移")
     ax2.set_ylabel("日降水量 (mm)")
     ax2.set_xlabel("日付 (月/日)")
