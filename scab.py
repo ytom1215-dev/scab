@@ -436,7 +436,7 @@ def plot_multiyear_overlay(results_df, t_high, t_med, compare_years, start_md_da
     plt.tight_layout()
     return fig
 
-# 🌟【新機能】気象データ複数年比較グラフ
+# 🌟気象データ複数年比較グラフ
 def plot_weather_multiyear(weather_df, compare_years, start_md_date, end_md_date, bw_mode=False):
     BW_STYLES, BW_GRAYS = [("-",1.8,"o",7,"none"), ("--",1.8,"v",8,"none"), ("-.",1.8,"s",7,"none"), (":",2.0,"D",7,"none"), ("-",1.8,"^",8,"full")], ["#000000", "#333333", "#555555", "#777777", "#111111"]
     COLOR_STYLES, COLOR_PALETTE = [("-",1.8,"o",7,"none"), ("--",1.8,"v",8,"none"), ("-.",1.8,"s",7,"none"), (":",2.0,"D",7,"none"), ("-",1.8,"^",8,"full")], ["#4fc3f7", "#ef5350", "#66bb6a", "#ffa726", "#ab47bc"]
@@ -474,7 +474,6 @@ def plot_weather_multiyear(weather_df, compare_years, start_md_date, end_md_date
             
         df_y['md_date'] = df_y['time'].dt.date.apply(to_md_date)
         df_y = df_y.sort_values('md_date')
-        df_y['cum_precip'] = df_y['precipitation_sum'].fillna(0).cumsum()
         df_y['temp_ma7'] = df_y['temperature_2m_mean'].rolling(7, min_periods=1).mean()
 
         ls, lw, mk, ms, fs = BW_STYLES[i % len(BW_STYLES)] if bw_mode else COLOR_STYLES[i % len(COLOR_STYLES)]
@@ -484,16 +483,18 @@ def plot_weather_multiyear(weather_df, compare_years, start_md_date, end_md_date
         ax1.plot(df_y['md_date'], df_y['temperature_2m_mean'], color=color, alpha=0.25, linewidth=1, zorder=2) 
         ax1.plot(df_y['md_date'], df_y['temp_ma7'], color=color, linestyle=ls, linewidth=lw, zorder=3)
         
-        # ax2: 降水 (積算)
-        ax2.plot(df_y['md_date'], df_y['cum_precip'], color=color, linestyle=ls, linewidth=lw, zorder=3)
+        # ax2: 降水 (積算ではなく、日ごとの降水量をそのまま表示)
+        ax2.plot(df_y['md_date'], df_y['precipitation_sum'], color=color, linestyle=ls, linewidth=lw, alpha=0.8, zorder=3)
 
         season_label = f"{y}/{y+1}シーズン" if is_cross_year else f"{y}年"
         legend_handles.append(mlines.Line2D([], [], color=color, linestyle=ls, linewidth=lw, marker=mk, markersize=ms, fillstyle=fs, markerfacecolor=color if fs=="full" else "none", markeredgecolor=color, label=season_label))
 
     ax1.set_title("平均気温の推移 (太線: 7日移動平均 / 薄線: 日別値)")
     ax1.set_ylabel("平均気温 (℃)")
-    ax2.set_title("積算降水量の推移")
-    ax2.set_ylabel("積算降水量 (mm)")
+    
+    # 積算から日降水量への変更に伴うテキスト修正
+    ax2.set_title("日降水量の推移")
+    ax2.set_ylabel("日降水量 (mm)")
     ax2.set_xlabel("日付 (月/日)")
 
     ax2.xaxis.set_major_locator(mdates.DayLocator(interval=15))
@@ -567,22 +568,12 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
         ax1.yaxis.label.set_color("white")
         ax1.set_title("平均気温と降水量の推移", color="white", fontsize=14)
 
-        # 下段：降水
+        # 下段：降水 (積算をやめて、日降水量のみ表示)
         ax2.bar(plot_df['time'], plot_df['precipitation_sum'].fillna(0), color="#4fc3f7", width=0.8, alpha=0.85, label="日降水量")
         ax2.set_ylabel("日降水量 (mm)", color="white")
         ax2.set_xlabel("日付", color="white")
         ax2.yaxis.label.set_color("white")
-        
-        ax2b = ax2.twinx()
-        plot_df['cum_precip'] = plot_df['precipitation_sum'].fillna(0).cumsum()
-        ax2b.plot(plot_df['time'], plot_df['cum_precip'], color="white", linewidth=2, alpha=0.9, label="期間積算降水量")
-        ax2b.set_ylabel("積算降水量 (mm)", color="white")
-        ax2b.yaxis.label.set_color("white"); ax2b.tick_params(colors="white")
-        for spine in ax2b.spines.values(): spine.set_color("#444")
-        
-        lines, labels = ax2.get_legend_handles_labels()
-        lines2, labels2 = ax2b.get_legend_handles_labels()
-        ax2b.legend(lines + lines2, labels + labels2, loc="upper left", facecolor="#1a1d24", labelcolor="white")
+        ax2.legend(loc="upper left", facecolor="#1a1d24", labelcolor="white")
 
         apply_date_axis(ax2, span_days=(w_end_date - w_start_date).days)
         plt.tight_layout()
@@ -592,7 +583,9 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
         col1.metric("期間内の 日平均気温(平均値)", f"{plot_df['temperature_2m_mean'].mean():.1f} ℃")
         col2.metric("期間内の 積算降水量(合計値)", f"{plot_df['precipitation_sum'].sum():.1f} mm")
 
-        csv_data = plot_df[['time', 'temperature_2m_mean', 'precipitation_sum', 'cum_precip']].copy()
+        # CSVには参考として積算降水量を残しておく
+        csv_data = plot_df[['time', 'temperature_2m_mean', 'precipitation_sum']].copy()
+        csv_data['cum_precip'] = csv_data['precipitation_sum'].fillna(0).cumsum()
         csv_data.rename(columns={'time':'日付', 'temperature_2m_mean':'日平均気温(℃)', 'precipitation_sum':'日降水量(mm)', 'cum_precip':'積算降水量(mm)'}, inplace=True)
         csv_data['日付'] = csv_data['日付'].dt.strftime('%Y/%m/%d')
         st.download_button("📥 この期間の気象データをCSVでダウンロード", csv_data.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'), file_name=f"weather_data_{w_start_date.strftime('%Y%m%d')}_{w_end_date.strftime('%Y%m%d')}.csv", mime="text/csv")
