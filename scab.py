@@ -40,13 +40,13 @@ st.markdown("""
 st.sidebar.header("📡 データソース設定")
 data_source = st.sidebar.radio(
     "気象データの取得元を選択",
-    ["Open-Meteo (API自動取得)", "AMeDAS (CSVアップロード)"]
+    ["Open-Meteo (API自動取得)", "AMeDAS (テキスト貼り付け)"]
 )
 
-uploaded_csv = None
-if data_source == "AMeDAS (CSVアップロード)":
-    st.sidebar.info("💡 **CSV形式の注意**: 1行目にヘッダーがあり、列名に「日」「気温」「降水」が含まれるデータを推奨します。（文字コードはUTF-8またはShift-JIS）")
-    uploaded_csv = st.sidebar.file_uploader("AMeDASの気象データ (CSV) をアップロード", type=["csv"])
+pasted_data = None
+if data_source == "AMeDAS (テキスト貼り付け)":
+    st.sidebar.info("💡 **データの注意**: ExcelやCSVからデータをコピーし、下の枠に貼り付けてください。1行目にヘッダーがあり、列名に「日」「気温」「降水」が含まれるデータを推奨します。")
+    pasted_data = st.sidebar.text_area("AMeDASの気象データ (コピペ用)", height=200)
 
 st.sidebar.divider()
 
@@ -54,7 +54,7 @@ st.sidebar.header("🗺️ 分析モードと地点")
 
 analysis_mode = st.sidebar.radio(
     "分析モードを選択",
-    ["単一日の判定", "植え付け期間分析"]
+    ["単一日の判定", "植え付け期間分析", "複数年比較分析"]
 )
 
 loc_name = st.sidebar.selectbox("地点を選択", list(LOCATIONS.keys()))
@@ -71,7 +71,7 @@ st.sidebar.header("🌱 栽培パラメータ")
 if analysis_mode == "単一日の判定":
     planting_date     = st.sidebar.date_input("植え付け日", date(2025, 9, 30))
     analysis_end_date = None
-else:
+elif analysis_mode == "植え付け期間分析":
     planting_period = st.sidebar.date_input(
         "植え付け分析期間（開始日〜終了日）",
         (date(2025, 9, 30), date(2026, 1, 1)),
@@ -83,6 +83,25 @@ else:
         planting_date     = planting_period[0] if isinstance(planting_period, list) else planting_period
         analysis_end_date = planting_date
         st.sidebar.warning("期間（終了日）を選択してください。")
+else:
+    # 複数年比較分析
+    compare_years = st.sidebar.multiselect(
+        "比較する年を選択", 
+        list(range(2020, 2030)), 
+        default=[2023, 2024, 2025]
+    )
+    planting_period = st.sidebar.date_input(
+        "分析期間（月日）",
+        (date(2025, 9, 1), date(2025, 12, 31)),
+        help="選択された期間の「月日」のみを使用し、選択した全ての年で比較します。"
+    )
+    if isinstance(planting_period, tuple) and len(planting_period) == 2:
+        start_md_date, end_md_date = planting_period
+    else:
+        start_md_date = planting_period[0] if isinstance(planting_period, list) else planting_period
+        end_md_date = start_md_date
+        st.sidebar.warning("期間（終了日）を選択してください。")
+
 
 base_temp = st.sidebar.number_input(
     "ベース温度 (℃)", min_value=0.0, max_value=15.0, value=0.0, step=0.5
@@ -181,20 +200,13 @@ def fetch_weather_data(lat, lon, start_date, end_analysis_date=None, pre_fetch_d
     df['time'] = pd.to_datetime(df['time'])
     return df
 
-def parse_amedas_csv(uploaded_file):
-    """
-    アップロードされたCSVから日付、平均気温、降水量を抽出し、
-    Open-Meteoと同じデータフレーム形式に整える。
-    """
+def parse_amedas_text(text_data):
     try:
-        # Shift-JIS (気象庁デフォルト) を試行、ダメならUTF-8
-        try:
-            df = pd.read_csv(uploaded_file, encoding="shift_jis")
-        except UnicodeDecodeError:
-            uploaded_file.seek(0)
-            df = pd.read_csv(uploaded_file, encoding="utf-8")
+        if not text_data.strip():
+            raise ValueError("データが入力されていません。")
+
+        df = pd.read_csv(io.StringIO(text_data.strip()), sep=None, engine='python')
         
-        # カラム名の柔軟なマッチング
         time_col = None
         temp_col = None
         precip_col = None
@@ -209,7 +221,7 @@ def parse_amedas_csv(uploaded_file):
                 precip_col = col
 
         if not (time_col and temp_col and precip_col):
-            raise ValueError(f"CSVから必要な列を特定できませんでした。現在の列名: {list(df.columns)}")
+            raise ValueError(f"テキストから必要な列を特定できませんでした。現在の列名: {list(df.columns)}")
 
         df = df.rename(columns={
             time_col: 'time',
@@ -217,11 +229,9 @@ def parse_amedas_csv(uploaded_file):
             precip_col: 'precipitation_sum'
         })
         
-        # データのクレンジング
         df['time'] = pd.to_datetime(df['time'], errors='coerce')
-        # 気象庁データの欠損値記号等を除去して数値化
-        df['temperature_2m_mean'] = pd.to_numeric(df['temperature_2m_mean'].replace(r'[^\d\.-]', '', regex=True), errors='coerce')
-        df['precipitation_sum'] = pd.to_numeric(df['precipitation_sum'].replace(r'[^\d\.-]', '', regex=True), errors='coerce')
+        df['temperature_2m_mean'] = pd.to_numeric(df['temperature_2m_mean'].astype(str).replace(r'[^\d\.-]', '', regex=True), errors='coerce')
+        df['precipitation_sum'] = pd.to_numeric(df['precipitation_sum'].astype(str).replace(r'[^\d\.-]', '', regex=True), errors='coerce')
         
         df = df.dropna(subset=['time']).sort_values('time').reset_index(drop=True)
         
@@ -231,7 +241,7 @@ def parse_amedas_csv(uploaded_file):
         return df
 
     except Exception as e:
-        raise Exception(f"CSV読み込みエラー: {str(e)}")
+        raise Exception(f"テキスト読み込みエラー: {str(e)}")
 
 
 # ========== リスク計算 ==========
@@ -263,17 +273,14 @@ def calculate_scab_risk(p_date, weather_df, b_temp, g_start, g_end,
     risk_df      = df_after[(df_after['time'] >= start_date_w) & (df_after['time'] <= end_date_w)]
     total_precip = risk_df['precipitation_sum'].sum()
     
-    # 低温日数のカウント
     low_temp_count = (risk_df['temperature_2m_mean'] <= temp_thresh).sum() if not risk_df.empty else 0
 
-    # 先行降水量
     ante_start_ts     = pd.Timestamp(p_date) - timedelta(days=ante_days)
     ante_end_ts       = pd.Timestamp(p_date) - timedelta(days=1)
     ante_df           = weather_df[(weather_df['time'] >= ante_start_ts) & (weather_df['time'] <= ante_end_ts)]
     antecedent_precip = ante_df['precipitation_sum'].sum() if not ante_df.empty else 0.0
     ante_available    = not ante_df.empty
 
-    # 基本リスク判定
     if total_precip < t_high:
         base_risk_v = 2
     elif total_precip < t_med:
@@ -281,7 +288,6 @@ def calculate_scab_risk(p_date, weather_df, b_temp, g_start, g_end,
     else:
         base_risk_v = 0
 
-    # 補正の適用（それぞれ独立して1段階下げる、最低0）
     relief_points = 0
     ante_corrected = False
     temp_corrected = False
@@ -320,10 +326,14 @@ def calculate_scab_risk(p_date, weather_df, b_temp, g_start, g_end,
 
 # ========== 日付軸ユーティリティ ==========
 def apply_date_axis(ax, span_days=None):
-    """
-    X軸の日付ラベルを10日間隔で固定する。
-    """
-    locator = mdates.DayLocator(interval=10)
+    interval = 10
+    if span_days is not None:
+        if span_days > 150: interval = 20
+        elif span_days > 60: interval = 10
+        elif span_days > 30: interval = 5
+        else: interval = 2
+
+    locator = mdates.DayLocator(interval=interval)
     ax.xaxis.set_major_locator(locator)
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
     for lbl in ax.get_xticklabels():
@@ -369,7 +379,6 @@ def plot_period_analysis(results_df, t_high, t_med):
                        marker='s', s=130, edgecolors='cyan', facecolors='none',
                        linewidths=1.5, zorder=5, alpha=0.9)
 
-    # 閾値ライン
     x_min = df_plot['planting_date'].min()
     ax.axhline(t_high, color="#FF4B4B", linestyle=":", linewidth=1.5, alpha=0.8)
     ax.axhline(t_med,  color="#FFA500",  linestyle=":", linewidth=1.5, alpha=0.8)
@@ -381,7 +390,6 @@ def plot_period_analysis(results_df, t_high, t_med):
     ax.yaxis.label.set_color("white")
     apply_date_axis(ax, span_days=span_days)
 
-    # 凡例
     handles = [
         mpatches.Patch(color="#FF4B4B", label="高リスク (High)：乾燥"),
         mpatches.Patch(color="#FFA500", label="中リスク (Medium)"),
@@ -400,7 +408,7 @@ def plot_period_analysis(results_df, t_high, t_med):
 
 # ========== CSV生成 ==========
 def build_csv(results_df: pd.DataFrame, ante_days: int) -> bytes:
-    cols_src = ['planting_date', 'start_date_w', 'end_date_w', 'reached_end',
+    cols_src = ['target_year', 'planting_date', 'start_date_w', 'end_date_w', 'reached_end',
                 'antecedent_precip', 'ante_corrected', 'low_temp_count', 'temp_corrected',
                 'total_precip', 'base_risk_value', 'risk_level']
     avail   = [c for c in cols_src if c in results_df.columns]
@@ -415,7 +423,8 @@ def build_csv(results_df: pd.DataFrame, ante_days: int) -> bytes:
     if 'total_precip'       in show_df: show_df['total_precip']       = show_df['total_precip'].round(1)
     if 'antecedent_precip'  in show_df: show_df['antecedent_precip']  = show_df['antecedent_precip'].round(1)
 
-    show_df.rename(columns={
+    rename_dict = {
+        'target_year':      '対象年',
         'planting_date':    '植え付け日',
         'start_date_w':     'リスク期開始日',
         'end_date_w':       'リスク期終了日',
@@ -427,7 +436,8 @@ def build_csv(results_df: pd.DataFrame, ante_days: int) -> bytes:
         'total_precip':     'リスク期積算降水量(mm)',
         'base_risk_value':  '基本リスク値(補正前)',
         'risk_level':       'リスクレベル(補正後)',
-    }, inplace=True)
+    }
+    show_df.rename(columns=rename_dict, inplace=True)
     return show_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
 
 
@@ -438,28 +448,27 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
         st.error("高リスク上限は中リスク上限より小さい値を設定してください。")
         st.stop()
 
-    with st.spinner("気象データを取得・解析中..."):
-        if data_source == "Open-Meteo (API自動取得)":
-            try:
-                weather_df = fetch_weather_data(
-                    lat, lon, planting_date, analysis_end_date,
-                    pre_fetch_days=antecedent_days + 5
-                )
-            except Exception as e:
-                st.error(f"気象データ取得エラー (Open-Meteo): {e}")
-                st.stop()
-        else:
-            if uploaded_csv is None:
-                st.error("⚠️ AMeDASデータのCSVファイルがアップロードされていません。サイドバーからアップロードしてください。")
-                st.stop()
-            try:
-                weather_df = parse_amedas_csv(uploaded_csv)
-            except Exception as e:
-                st.error(e)
-                st.stop()
-
     # ─── 単一日の判定 ───────────────────────────
     if analysis_mode == "単一日の判定":
+        with st.spinner("気象データを取得・解析中..."):
+            if data_source == "Open-Meteo (API自動取得)":
+                try:
+                    weather_df = fetch_weather_data(
+                        lat, lon, planting_date, pre_fetch_days=antecedent_days + 5
+                    )
+                except Exception as e:
+                    st.error(f"気象データ取得エラー: {e}")
+                    st.stop()
+            else:
+                if not pasted_data:
+                    st.error("⚠️ AMeDASのデータが入力されていません。")
+                    st.stop()
+                try:
+                    weather_df = parse_amedas_text(pasted_data)
+                except Exception as e:
+                    st.error(e)
+                    st.stop()
+
         res = calculate_scab_risk(
             planting_date, weather_df, base_temp, gdd_start, gdd_end,
             threshold_high, threshold_med,
@@ -482,14 +491,12 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
         col5.metric(f"先行{antecedent_days}日間 降水量",
                     f"{res['antecedent_precip']:.1f} mm" if res['ante_available'] else "データなし")
 
-        # 補正の通知
         if use_antecedent and res['ante_corrected']:
             st.success(f"💧 先行{antecedent_days}日間の降水量 **{res['antecedent_precip']:.1f}mm** ≥ {antecedent_relief_mm}mm のため、リスクを軽減しました。")
             
         if use_low_temp and res['temp_corrected']:
             st.success(f"❄️ リスク期に {low_temp_threshold}℃以下の日が **{res['low_temp_count']}日**（基準{low_temp_days}日以上）あったため、病菌活動低下とみなしリスクを軽減しました。")
 
-        # リスクカード
         st.markdown(f"""
         <div style="background-color:{res['risk_color']}18; border-left:5px solid {res['risk_color']};
                     padding:15px; border-radius:5px; margin-top:10px;">
@@ -501,7 +508,6 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
         </div>
         """, unsafe_allow_html=True)
 
-        # グラフ
         st.subheader("📈 気象データの推移（リスク期を強調表示）")
         plot_span = (res['end_date_w'] - res['start_date_w']).days
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
@@ -520,9 +526,7 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
             ax.axvline(risk_start_num, color=color_code, linestyle="--", linewidth=1.2, alpha=0.8)
             ax.axvline(risk_end_num,   color=color_code, linestyle="--", linewidth=1.2, alpha=0.8)
 
-        # 上段: 積算GDD
-        ax1.plot(res['plot_df']['time'], res['plot_df']['gdd_cum'],
-                 color="#00d4aa", linewidth=2, label="積算GDD")
+        ax1.plot(res['plot_df']['time'], res['plot_df']['gdd_cum'], color="#00d4aa", linewidth=2, label="積算GDD")
         ax1.axhline(gdd_start, color="#ffcc00", linestyle=":", linewidth=1, alpha=0.7)
         ax1.axhline(gdd_end,   color="#ff8800", linestyle=":", linewidth=1, alpha=0.7)
         highlight_risk(ax1, res['risk_color'])
@@ -530,7 +534,6 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
         ax1.legend(loc="upper left", facecolor="#1a1d24", labelcolor="white")
         ax1.yaxis.label.set_color("white")
 
-        # 下段: 日降水量 + 積算ライン
         colors_bar = [
             res['risk_color'] if (res['start_date_w'] <= t <= res['end_date_w']) else "#4a90d9"
             for t in res['plot_df']['time']
@@ -543,8 +546,7 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
             cum_df = res['risk_df'].copy()
             cum_df['cum_precip'] = cum_df['precipitation_sum'].fillna(0).cumsum()
             ax2b = ax2.twinx()
-            ax2b.plot(cum_df['time'], cum_df['cum_precip'],
-                      color="white", linewidth=1.5, alpha=0.8, label="リスク期積算降水量")
+            ax2b.plot(cum_df['time'], cum_df['cum_precip'], color="white", linewidth=1.5, alpha=0.8, label="リスク期積算降水量")
             ax2b.set_ylabel("リスク期積算降水量 (mm)", color="white")
             ax2b.yaxis.label.set_color("white")
             ax2b.tick_params(colors="white")
@@ -558,12 +560,11 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
         plt.tight_layout()
         st.pyplot(fig)
 
-        # 単一日CSV
         single_csv = pd.DataFrame([{
             '植え付け日':                           planting_date.strftime('%Y/%m/%d'),
             'リスク期開始日':                       res['start_date_w'].strftime('%Y/%m/%d'),
             'リスク期終了日':                       res['end_date_w'].strftime('%Y/%m/%d'),
-            'GDD終了閾値到達':                      '到達' if res['reached_end'] else '未到達',
+            'GDD終了閾値到達':                       '到達' if res['reached_end'] else '未到達',
             f'先行{antecedent_days}日間降水量(mm)': round(res['antecedent_precip'], 1),
             '先行降水補正':                         '補正あり' if res['ante_corrected'] else '-',
             'リスク期 低温日数(日)':                res['low_temp_count'],
@@ -580,8 +581,28 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
             mime="text/csv",
         )
 
-    # ─── 植え付け期間分析 ──────────────────────
-    else:
+    # ─── 植え付け期間分析 (1シーズン) ─────────────
+    elif analysis_mode == "植え付け期間分析":
+        with st.spinner("気象データを取得・解析中..."):
+            if data_source == "Open-Meteo (API自動取得)":
+                try:
+                    weather_df = fetch_weather_data(
+                        lat, lon, planting_date, analysis_end_date,
+                        pre_fetch_days=antecedent_days + 5
+                    )
+                except Exception as e:
+                    st.error(f"気象データ取得エラー: {e}")
+                    st.stop()
+            else:
+                if not pasted_data:
+                    st.error("⚠️ AMeDASのデータが入力されていません。")
+                    st.stop()
+                try:
+                    weather_df = parse_amedas_text(pasted_data)
+                except Exception as e:
+                    st.error(e)
+                    st.stop()
+
         date_list = []
         cur = planting_date
         while cur <= analysis_end_date:
@@ -660,6 +681,142 @@ if st.sidebar.button("▶ リスク分析を実行", type="primary"):
             if 'antecedent_precip'  in show_df: show_df['antecedent_precip']  = show_df['antecedent_precip'].round(1)
 
             show_df.rename(columns={
+                'planting_date':    '植え付け日',
+                'antecedent_precip': f'先行{antecedent_days}日間降水量(mm)',
+                'ante_corrected':   '先行降水補正',
+                'low_temp_count':   'リスク期 低温日数(日)',
+                'temp_corrected':   '低温補正',
+                'total_precip':     'リスク期 降水量(mm)',
+                'risk_level':       'リスクレベル(補正後)',
+                'start_date_w':     'リスク期 開始日',
+                'end_date_w':       'リスク期 終了日',
+                'reached_end':      'GDD終了閾値到達',
+            }, inplace=True)
+            st.dataframe(show_df, use_container_width=True)
+
+    # ─── 複数年比較分析 ────────────────────────
+    elif analysis_mode == "複数年比較分析":
+        if not compare_years:
+            st.error("⚠️ 比較する年を1つ以上選択してください。")
+            st.stop()
+
+        # 年をまたぐ期間かどうかの判定 (例: 9/1 〜 2/28)
+        is_cross_year = (start_md_date.month > end_md_date.month) or \
+                        (start_md_date.month == end_md_date.month and start_md_date.day > end_md_date.day)
+
+        min_year = min(compare_years)
+        max_year = max(compare_years)
+        
+        overall_start = date(min_year, start_md_date.month, start_md_date.day)
+        overall_end   = date(max_year + (1 if is_cross_year else 0), end_md_date.month, end_md_date.day)
+
+        with st.spinner("対象となる全期間の気象データを取得・解析中..."):
+            if data_source == "Open-Meteo (API自動取得)":
+                try:
+                    weather_df = fetch_weather_data(
+                        lat, lon, overall_start, overall_end,
+                        pre_fetch_days=antecedent_days + 5
+                    )
+                except Exception as e:
+                    st.error(f"気象データ取得エラー: {e}")
+                    st.stop()
+            else:
+                if not pasted_data:
+                    st.error("⚠️ AMeDASのデータが入力されていません。")
+                    st.stop()
+                try:
+                    weather_df = parse_amedas_text(pasted_data)
+                except Exception as e:
+                    st.error(e)
+                    st.stop()
+
+        all_results = []
+        bar = st.progress(0)
+        
+        # 処理する全日数を計算してプログレスバーに使用
+        date_lists = {}
+        total_days = 0
+        for y in sorted(compare_years):
+            s_date = date(y, start_md_date.month, start_md_date.day)
+            # 終了日が年をまたぐ場合は年を+1する
+            e_date = date(y + (1 if is_cross_year else 0), end_md_date.month, end_md_date.day)
+            
+            d_list = []
+            cur = s_date
+            while cur <= e_date:
+                d_list.append(cur)
+                cur += timedelta(days=1)
+            date_lists[y] = d_list
+            total_days += len(d_list)
+
+        processed_days = 0
+        for y in sorted(compare_years):
+            for p_date in date_lists[y]:
+                res = calculate_scab_risk(
+                    p_date, weather_df, base_temp, gdd_start, gdd_end,
+                    threshold_high, threshold_med,
+                    use_antecedent, antecedent_days, antecedent_relief_mm,
+                    use_low_temp, low_temp_threshold, low_temp_days
+                )
+                if res:
+                    res['target_year'] = f"{y}年"
+                    all_results.append(res)
+                
+                processed_days += 1
+                if processed_days % max(1, total_days // 20) == 0:
+                    bar.progress(processed_days / total_days, text=f"分析中... {p_date.strftime('%Y/%m/%d')}")
+        bar.empty()
+
+        results_df = pd.DataFrame(all_results)
+        if results_df.empty:
+            st.warning("指定された期間で分析できるデータがありませんでした。")
+            st.stop()
+
+        st.subheader("📈 複数年比較 感染リスクの変化")
+        st.info("ℹ️ 指定した月日での植え付けリスクを年ごとに比較します。縦軸（積算降水量）が低いほど高リスク（乾燥条件）です。")
+
+        # 年ごとのグラフを縦に並べて表示
+        for y in sorted(compare_years):
+            st.markdown(f"#### ▼ {y}年シーズン（{start_md_date.strftime('%m/%d')} 〜 {end_md_date.strftime('%m/%d')} 植え付け）")
+            df_year = results_df[results_df['target_year'] == f"{y}年"]
+            
+            if df_year.empty or (df_year['status'] == '判定完了').sum() == 0:
+                st.warning(f"{y}年シーズンの判定完了データがありません。（気象データ不足など）")
+                continue
+            
+            fig_period = plot_period_analysis(df_year, threshold_high, threshold_med)
+            st.pyplot(fig_period)
+
+        csv_data = build_csv(results_df, antecedent_days)
+        filename = f"scab_risk_multiyear_{loc_name}.csv"
+
+        st.divider()
+        st.download_button(
+            label="📥 複数年比較の全分析結果をCSVでダウンロード",
+            data=csv_data,
+            file_name=filename,
+            mime="text/csv",
+        )
+
+        with st.expander("📋 分析結果の詳細データテーブル"):
+            completed = results_df[results_df['status'] == '判定完了']
+            disp_cols = ['target_year', 'planting_date', 'antecedent_precip', 'ante_corrected', 
+                         'low_temp_count', 'temp_corrected',
+                         'total_precip', 'risk_level', 'start_date_w', 'end_date_w', 'reached_end']
+            disp_cols = [c for c in disp_cols if c in completed.columns]
+            show_df   = completed[disp_cols].copy()
+
+            date_cols2 = ['planting_date', 'start_date_w', 'end_date_w']
+            for c in date_cols2:
+                if c in show_df: show_df[c] = pd.to_datetime(show_df[c]).dt.strftime('%Y/%m/%d')
+            if 'reached_end'        in show_df: show_df['reached_end']        = show_df['reached_end'].map({True: '到達', False: '未到達'})
+            if 'ante_corrected'     in show_df: show_df['ante_corrected']     = show_df['ante_corrected'].map({True: '補正あり', False: '-'})
+            if 'temp_corrected'     in show_df: show_df['temp_corrected']     = show_df['temp_corrected'].map({True: '補正あり', False: '-'})
+            if 'total_precip'       in show_df: show_df['total_precip']       = show_df['total_precip'].round(1)
+            if 'antecedent_precip'  in show_df: show_df['antecedent_precip']  = show_df['antecedent_precip'].round(1)
+
+            show_df.rename(columns={
+                'target_year':      '対象年',
                 'planting_date':    '植え付け日',
                 'antecedent_precip': f'先行{antecedent_days}日間降水量(mm)',
                 'ante_corrected':   '先行降水補正',
