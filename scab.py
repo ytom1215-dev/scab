@@ -46,7 +46,7 @@ st.markdown("""
 マルチ栽培を前提とし、植え付け日からの積算温度で塊茎の初期肥大期を推定します。  
 **積算温度が設定GDD閾値**の期間を「感染リスク期」とし、その間の降水量でリスクを判定します。  
 ⚠️ **判定基準**: そうか病は乾燥条件で感染拡大するため、リスク期の**降水量が少ないほど高リスク**と判定します。  
-💧 **先行降水補正**: 植え付け前の降水量が多い場合、初期土壌水分が高いとみなしリスクを1段階軽減します（初期定着直後の土壌水分への影響に限定）。  
+💧 **先行降水補正**: 植え付け前の降水量が多い場合、初期土壌水分が高いとみなしリスクを1段階軽減します。  
 ❄️ **低温補正**: リスク期に地上2m気温（地温の代替指標）が低い日が続く場合、病原菌の活動が抑制されるためリスクを1段階軽減します。
 """)
 
@@ -72,10 +72,15 @@ st.sidebar.divider()
 
 st.sidebar.header("🗺️ アプリのモードと地点")
 
-# 🌟【新機能】気象データ表示モードの追加
 analysis_mode = st.sidebar.radio(
     "利用する機能を選択",
-    ["単一日の判定", "植え付け期間分析", "複数年比較分析", "📊 単純な気象データ表示"]
+    [
+        "🦠 リスク判定: 単一日の判定", 
+        "🦠 リスク判定: 植え付け期間分析", 
+        "🦠 リスク判定: 複数年比較分析", 
+        "📊 気象データ: 単一期間の表示", 
+        "📊 気象データ: 複数年比較"
+    ]
 )
 
 loc_name = st.sidebar.selectbox("地点を選択", list(LOCATIONS.keys()))
@@ -91,57 +96,74 @@ st.sidebar.divider()
 # グローバル用の変数初期化
 bw_mode = False
 
-# --- 分析モード別の日付設定 ---
-if analysis_mode == "単一日の判定":
+# ============================================================
+# 分析モード別の日付設定UI
+# ============================================================
+if analysis_mode == "🦠 リスク判定: 単一日の判定":
     planting_date     = st.sidebar.date_input("植え付け日", date(2025, 9, 30))
     analysis_end_date = None
 
-elif analysis_mode == "植え付け期間分析":
+elif analysis_mode == "🦠 リスク判定: 植え付け期間分析":
     planting_period = st.sidebar.date_input(
         "植え付け分析期間（開始日〜終了日）",
         (date(2025, 9, 30), date(2026, 1, 1))
     )
     if isinstance(planting_period, (tuple, list)) and len(planting_period) == 2:
-        planting_date     = planting_period[0]
-        analysis_end_date = planting_period[1]
+        planting_date, analysis_end_date = planting_period[0], planting_period[1]
     else:
-        planting_date     = planting_period[0] if isinstance(planting_period, (tuple, list)) else planting_period
+        planting_date = planting_period[0] if isinstance(planting_period, (tuple, list)) else planting_period
         analysis_end_date = planting_date
         st.sidebar.warning("終了日を選択してください。")
 
-elif analysis_mode == "複数年比較分析":
+elif analysis_mode == "🦠 リスク判定: 複数年比較分析":
     compare_years = st.sidebar.multiselect("比較する年を選択", list(range(2020, 2030)), default=[2023, 2024, 2025])
     planting_period = st.sidebar.date_input("分析期間（月日）", (date(2025, 9, 1), date(2025, 12, 31)))
     if isinstance(planting_period, (tuple, list)) and len(planting_period) == 2:
-        start_md_date = planting_period[0]
-        end_md_date   = planting_period[1]
+        start_md_date, end_md_date = planting_period[0], planting_period[1]
     else:
         start_md_date = planting_period[0] if isinstance(planting_period, (tuple, list)) else planting_period
         end_md_date   = start_md_date
         st.sidebar.warning("終了日を選択してください。")
     
     st.sidebar.divider()
-    st.sidebar.header("🎨 グラフ表示設定 (複数年比較)")
+    st.sidebar.header("🎨 グラフ表示設定")
     overlay_mode = st.sidebar.radio("複数年比較グラフの表示モード", ["🌈 通常（カラー）", "🖨️ 白黒印刷用"], horizontal=True)
     bw_mode = (overlay_mode == "🖨️ 白黒印刷用")
 
-# 🌟【新機能】気象データ表示モード専用の日付入力
-elif analysis_mode == "📊 単純な気象データ表示":
+elif analysis_mode == "📊 気象データ: 単一期間の表示":
     st.sidebar.header("📅 気象表示期間設定")
     weather_period = st.sidebar.date_input(
         "表示する期間（開始日〜終了日）",
         (date(2025, 9, 1), date(2026, 3, 1))
     )
     if isinstance(weather_period, (tuple, list)) and len(weather_period) == 2:
-        w_start_date = weather_period[0]
-        w_end_date   = weather_period[1]
+        w_start_date, w_end_date = weather_period[0], weather_period[1]
     else:
         w_start_date = weather_period[0] if isinstance(weather_period, (tuple, list)) else weather_period
         w_end_date   = w_start_date
         st.sidebar.warning("終了日を選択してください。")
 
-# 🌟気象データ表示モードの場合は、病気リスク関連のパラメータを非表示にしてUIをスッキリさせる
-if analysis_mode != "📊 単純な気象データ表示":
+elif analysis_mode == "📊 気象データ: 複数年比較":
+    st.sidebar.header("📅 気象表示期間設定 (複数年)")
+    compare_years = st.sidebar.multiselect("比較する年を選択", list(range(2020, 2030)), default=[2023, 2024, 2025])
+    weather_period = st.sidebar.date_input(
+        "比較する期間（月日）",
+        (date(2025, 9, 1), date(2026, 3, 1))
+    )
+    if isinstance(weather_period, (tuple, list)) and len(weather_period) == 2:
+        start_md_date, end_md_date = weather_period[0], weather_period[1]
+    else:
+        start_md_date = weather_period[0] if isinstance(weather_period, (tuple, list)) else weather_period
+        end_md_date   = start_md_date
+        st.sidebar.warning("終了日を選択してください。")
+
+    st.sidebar.divider()
+    st.sidebar.header("🎨 グラフ表示設定")
+    overlay_mode = st.sidebar.radio("複数年比較グラフの表示モード", ["🌈 通常（カラー）", "🖨️ 白黒印刷用"], horizontal=True)
+    bw_mode = (overlay_mode == "🖨️ 白黒印刷用")
+
+# 🌟気象データ表示モードの場合は、病気リスク関連のパラメータを非表示にする
+if not analysis_mode.startswith("📊"):
     st.sidebar.divider()
     st.sidebar.header("🌱 栽培パラメータ")
     base_temp = st.sidebar.number_input("ベース温度 (℃)", min_value=0.0, max_value=15.0, value=7.0, step=0.5)
@@ -150,13 +172,11 @@ if analysis_mode != "📊 単純な気象データ表示":
     st.sidebar.header("⚙️ GDD閾値")
     gdd_start = st.sidebar.number_input("開始 GDD", value=300, step=10)
     gdd_end   = st.sidebar.number_input("終了 GDD", value=600, step=10)
-    if gdd_start >= gdd_end: st.sidebar.error("⚠️ GDD開始閾値は終了閾値より小さい値を設定してください。")
 
     st.sidebar.divider()
     st.sidebar.header("🌧️ リスク判定閾値（降水量）")
     threshold_high = st.sidebar.number_input("高リスク境界値 (mm)", value=THRESHOLD_HIGH_DEFAULT)
     threshold_med  = st.sidebar.number_input("中リスク境界値 (mm)", value=THRESHOLD_MED_DEFAULT)
-    if threshold_high >= threshold_med: st.sidebar.error("⚠️ 高リスクは中リスクより小さい値を設定してください。")
 
     st.sidebar.divider()
     st.sidebar.header("💧 先行降水量補正")
@@ -224,7 +244,6 @@ def fetch_weather_data(lat, lon, start_date, end_analysis_date=None, pre_fetch_d
     df['time'] = pd.to_datetime(df['time'])
     return df
 
-
 # ============================================================
 # AMeDASテキストパーサー
 # ============================================================
@@ -266,9 +285,8 @@ def parse_amedas_text(text_data):
     if df.empty: raise ValueError("有効な気象データ行が見つかりませんでした。")
     return df
 
-
 # ============================================================
-# リスク計算関数群等（省略せずに記述）
+# リスク計算関数
 # ============================================================
 def calculate_scab_risk(p_date, weather_df, b_temp, g_start, g_end, t_high, t_med, use_ante, ante_days, ante_relief_mm, use_temp, temp_thresh, temp_days):
     df_after = weather_df[weather_df['time'] >= pd.Timestamp(p_date)].copy()
@@ -329,9 +347,7 @@ def apply_date_axis(ax, span_days=None):
 
 def plot_period_analysis(results_df, t_high, t_med, title_suffix=""):
     fig, ax = plt.subplots(figsize=(12, 6))
-    fig.patch.set_facecolor("#0e1117")
-    ax.set_facecolor("#1a1d24")
-    ax.tick_params(colors="white")
+    fig.patch.set_facecolor("#0e1117"); ax.set_facecolor("#1a1d24"); ax.tick_params(colors="white")
     for spine in ax.spines.values(): spine.set_color("#444")
 
     df_plot = results_df[results_df['status'] == '判定完了'].copy()
@@ -420,6 +436,74 @@ def plot_multiyear_overlay(results_df, t_high, t_med, compare_years, start_md_da
     plt.tight_layout()
     return fig
 
+# 🌟【新機能】気象データ複数年比較グラフ
+def plot_weather_multiyear(weather_df, compare_years, start_md_date, end_md_date, bw_mode=False):
+    BW_STYLES, BW_GRAYS = [("-",1.8,"o",7,"none"), ("--",1.8,"v",8,"none"), ("-.",1.8,"s",7,"none"), (":",2.0,"D",7,"none"), ("-",1.8,"^",8,"full")], ["#000000", "#333333", "#555555", "#777777", "#111111"]
+    COLOR_STYLES, COLOR_PALETTE = [("-",1.8,"o",7,"none"), ("--",1.8,"v",8,"none"), ("-.",1.8,"s",7,"none"), (":",2.0,"D",7,"none"), ("-",1.8,"^",8,"full")], ["#4fc3f7", "#ef5350", "#66bb6a", "#ffa726", "#ab47bc"]
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 10), sharex=True)
+    if bw_mode:
+        fig.patch.set_facecolor("white"); 
+        for ax in (ax1, ax2): ax.set_facecolor("white")
+        fg_main, spine_c, grid_c = "black", "#aaaaaa", "#dddddd"
+    else:
+        fig.patch.set_facecolor("#0e1117"); 
+        for ax in (ax1, ax2): ax.set_facecolor("#1a1d24")
+        fg_main, spine_c, grid_c = "white", "#444444", "#2a2d34"
+
+    for ax in (ax1, ax2):
+        ax.tick_params(colors=fg_main); ax.xaxis.label.set_color(fg_main); ax.yaxis.label.set_color(fg_main); ax.title.set_color(fg_main)
+        for spine in ax.spines.values(): spine.set_color(spine_c)
+        ax.grid(axis='y', color=grid_c, linewidth=0.7, linestyle=':', zorder=0)
+
+    legend_handles = []
+    is_cross_year = (start_md_date.month > end_md_date.month) or (start_md_date.month == end_md_date.month and start_md_date.day > end_md_date.day)
+
+    for i, y in enumerate(sorted(compare_years)):
+        s_date = get_safe_date(y, start_md_date.month, start_md_date.day)
+        e_date = get_safe_date(y + (1 if is_cross_year else 0), end_md_date.month, end_md_date.day)
+        
+        mask = (weather_df['time'].dt.date >= s_date) & (weather_df['time'].dt.date <= e_date)
+        df_y = weather_df[mask].copy()
+        if df_y.empty: continue
+
+        def to_md_date(d):
+            base_y = 2000 if d.month >= start_md_date.month else 2001
+            try: return d.replace(year=base_y)
+            except ValueError: return d.replace(year=base_y, day=28)
+            
+        df_y['md_date'] = df_y['time'].dt.date.apply(to_md_date)
+        df_y = df_y.sort_values('md_date')
+        df_y['cum_precip'] = df_y['precipitation_sum'].fillna(0).cumsum()
+        df_y['temp_ma7'] = df_y['temperature_2m_mean'].rolling(7, min_periods=1).mean()
+
+        ls, lw, mk, ms, fs = BW_STYLES[i % len(BW_STYLES)] if bw_mode else COLOR_STYLES[i % len(COLOR_STYLES)]
+        color = BW_GRAYS[i % len(BW_GRAYS)] if bw_mode else COLOR_PALETTE[i % len(COLOR_PALETTE)]
+
+        # ax1: 気温 (日別は透過、移動平均は濃く表示)
+        ax1.plot(df_y['md_date'], df_y['temperature_2m_mean'], color=color, alpha=0.25, linewidth=1, zorder=2) 
+        ax1.plot(df_y['md_date'], df_y['temp_ma7'], color=color, linestyle=ls, linewidth=lw, zorder=3)
+        
+        # ax2: 降水 (積算)
+        ax2.plot(df_y['md_date'], df_y['cum_precip'], color=color, linestyle=ls, linewidth=lw, zorder=3)
+
+        season_label = f"{y}/{y+1}シーズン" if is_cross_year else f"{y}年"
+        legend_handles.append(mlines.Line2D([], [], color=color, linestyle=ls, linewidth=lw, marker=mk, markersize=ms, fillstyle=fs, markerfacecolor=color if fs=="full" else "none", markeredgecolor=color, label=season_label))
+
+    ax1.set_title("平均気温の推移 (太線: 7日移動平均 / 薄線: 日別値)")
+    ax1.set_ylabel("平均気温 (℃)")
+    ax2.set_title("積算降水量の推移")
+    ax2.set_ylabel("積算降水量 (mm)")
+    ax2.set_xlabel("日付 (月/日)")
+
+    ax2.xaxis.set_major_locator(mdates.DayLocator(interval=15))
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
+    for lbl in ax2.get_xticklabels(): lbl.set_rotation(45); lbl.set_ha('right'); lbl.set_color(fg_main)
+
+    ax1.legend(handles=legend_handles, loc="best", facecolor="white" if bw_mode else "#1a1d24", edgecolor=spine_c, labelcolor=fg_main, framealpha=0.92)
+    plt.tight_layout()
+    return fig
+
 def build_csv(results_df: pd.DataFrame, ante_days: int) -> bytes:
     cols_src = ['target_year', 'planting_date', 'start_date_w', 'end_date_w', 'reached_end', 'antecedent_precip', 'ante_corrected', 'low_temp_count', 'temp_corrected', 'total_precip', 'missing_precip_days', 'base_risk_value', 'risk_level']
     show_df = results_df[results_df['status'] == '判定完了'][[c for c in cols_src if c in results_df.columns]].copy()
@@ -441,15 +525,15 @@ def build_csv(results_df: pd.DataFrame, ante_days: int) -> bytes:
 # ============================================================
 if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
 
-    # 病気リスク判定用のバリデーション（気象表示モード以外）
-    if analysis_mode != "📊 単純な気象データ表示":
+    # 病気リスク判定用のバリデーション
+    if not analysis_mode.startswith("📊"):
         if gdd_start >= gdd_end: st.error("GDD開始閾値は終了閾値より小さい値を設定してください。"); st.stop()
         if threshold_high >= threshold_med: st.error("高リスク境界値は中リスク境界値より小さい値を設定してください。"); st.stop()
 
     # ────────────────────────────────────────────────────────
-    # 🌟【新機能】単純な気象データ表示モード
+    # 🌟 単一期間の気象データ表示
     # ────────────────────────────────────────────────────────
-    if analysis_mode == "📊 単純な気象データ表示":
+    if analysis_mode == "📊 気象データ: 単一期間の表示":
         with st.spinner("気象データを取得・解析中..."):
             if data_source == "Open-Meteo (API自動取得)":
                 try: weather_df = fetch_weather_data(lat, lon, w_start_date, w_end_date, pre_fetch_days=5)
@@ -459,7 +543,6 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
                 try: weather_df = parse_amedas_text(pasted_data)
                 except Exception as e: st.error(e); st.stop()
 
-        # 指定期間でフィルタリング
         mask = (weather_df['time'] >= pd.Timestamp(w_start_date)) & (weather_df['time'] <= pd.Timestamp(w_end_date))
         plot_df = weather_df[mask].copy()
 
@@ -470,23 +553,21 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
         st.subheader(f"📊 気象データの推移（{w_start_date.strftime('%Y/%m/%d')} 〜 {w_end_date.strftime('%Y/%m/%d')}）")
         st.caption(f"データソース: {data_source} ／ 地点: {loc_name}")
 
-        # --- グラフ描画 ---
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
         fig.patch.set_facecolor("#0e1117")
         for ax in (ax1, ax2):
-            ax.set_facecolor("#1a1d24")
-            ax.tick_params(colors="white")
+            ax.set_facecolor("#1a1d24"); ax.tick_params(colors="white")
             for spine in ax.spines.values(): spine.set_color("#444")
             ax.grid(color="#333", linestyle=":", linewidth=0.8)
 
-        # 上段：平均気温（折れ線）
+        # 上段：気温
         ax1.plot(plot_df['time'], plot_df['temperature_2m_mean'], color="#ff7043", linewidth=2, label="日平均気温 (℃)")
         ax1.set_ylabel("日平均気温 (℃)", color="white")
         ax1.legend(loc="upper left", facecolor="#1a1d24", labelcolor="white")
         ax1.yaxis.label.set_color("white")
         ax1.set_title("平均気温と降水量の推移", color="white", fontsize=14)
 
-        # 下段：降水量（棒グラフ）＆積算降水量（折れ線）
+        # 下段：降水
         ax2.bar(plot_df['time'], plot_df['precipitation_sum'].fillna(0), color="#4fc3f7", width=0.8, alpha=0.85, label="日降水量")
         ax2.set_ylabel("日降水量 (mm)", color="white")
         ax2.set_xlabel("日付", color="white")
@@ -496,45 +577,78 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
         plot_df['cum_precip'] = plot_df['precipitation_sum'].fillna(0).cumsum()
         ax2b.plot(plot_df['time'], plot_df['cum_precip'], color="white", linewidth=2, alpha=0.9, label="期間積算降水量")
         ax2b.set_ylabel("積算降水量 (mm)", color="white")
-        ax2b.yaxis.label.set_color("white")
-        ax2b.tick_params(colors="white")
+        ax2b.yaxis.label.set_color("white"); ax2b.tick_params(colors="white")
         for spine in ax2b.spines.values(): spine.set_color("#444")
         
-        # 凡例を統合して表示
         lines, labels = ax2.get_legend_handles_labels()
         lines2, labels2 = ax2b.get_legend_handles_labels()
         ax2b.legend(lines + lines2, labels + labels2, loc="upper left", facecolor="#1a1d24", labelcolor="white")
 
-        span_days = (w_end_date - w_start_date).days
-        apply_date_axis(ax2, span_days=span_days)
+        apply_date_axis(ax2, span_days=(w_end_date - w_start_date).days)
         plt.tight_layout()
         st.pyplot(fig)
 
-        # --- サマリー情報とCSVダウンロード ---
-        avg_temp = plot_df['temperature_2m_mean'].mean()
-        total_precip = plot_df['precipitation_sum'].sum()
-        
         col1, col2 = st.columns(2)
-        col1.metric("期間内の 日平均気温(平均値)", f"{avg_temp:.1f} ℃")
-        col2.metric("期間内の 積算降水量(合計値)", f"{total_precip:.1f} mm")
+        col1.metric("期間内の 日平均気温(平均値)", f"{plot_df['temperature_2m_mean'].mean():.1f} ℃")
+        col2.metric("期間内の 積算降水量(合計値)", f"{plot_df['precipitation_sum'].sum():.1f} mm")
 
         csv_data = plot_df[['time', 'temperature_2m_mean', 'precipitation_sum', 'cum_precip']].copy()
         csv_data.rename(columns={'time':'日付', 'temperature_2m_mean':'日平均気温(℃)', 'precipitation_sum':'日降水量(mm)', 'cum_precip':'積算降水量(mm)'}, inplace=True)
         csv_data['日付'] = csv_data['日付'].dt.strftime('%Y/%m/%d')
-        
-        st.download_button(
-            label="📥 この期間の気象データをCSVでダウンロード",
-            data=csv_data.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'),
-            file_name=f"weather_data_{w_start_date.strftime('%Y%m%d')}_{w_end_date.strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
+        st.download_button("📥 この期間の気象データをCSVでダウンロード", csv_data.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'), file_name=f"weather_data_{w_start_date.strftime('%Y%m%d')}_{w_end_date.strftime('%Y%m%d')}.csv", mime="text/csv")
+        st.stop()
+
+    # ────────────────────────────────────────────────────────
+    # 🌟 複数年比較の気象データ表示
+    # ────────────────────────────────────────────────────────
+    elif analysis_mode == "📊 気象データ: 複数年比較":
+        if not compare_years: st.error("⚠️ 比較する年を選択してください。"); st.stop()
+
+        is_cross_year = (start_md_date.month > end_md_date.month) or (start_md_date.month == end_md_date.month and start_md_date.day > end_md_date.day)
+        overall_start = get_safe_date(min(compare_years), start_md_date.month, start_md_date.day)
+        overall_end   = get_safe_date(max(compare_years) + (1 if is_cross_year else 0), end_md_date.month, end_md_date.day)
+
+        with st.spinner("対象となる全期間の気象データを取得・解析中..."):
+            if data_source == "Open-Meteo (API自動取得)":
+                try: weather_df = fetch_weather_data(lat, lon, overall_start, overall_end, pre_fetch_days=5)
+                except Exception as e: st.error(e); st.stop()
+            else:
+                try: weather_df = parse_amedas_text(pasted_data)
+                except Exception as e: st.error(e); st.stop()
+
+        st.subheader(f"📊 気象データの複数年比較（{start_md_date.strftime('%m/%d')} 〜 {end_md_date.strftime('%m/%d')}）")
+        st.caption(f"データソース: {data_source} ／ 地点: {loc_name}")
+
+        fig_w_multi = plot_weather_multiyear(weather_df, compare_years, start_md_date, end_md_date, bw_mode=bw_mode)
+        st.pyplot(fig_w_multi)
+
+        # CSV用データ生成
+        all_weather_data = []
+        for y in sorted(compare_years):
+            s_date = get_safe_date(y, start_md_date.month, start_md_date.day)
+            e_date = get_safe_date(y + (1 if is_cross_year else 0), end_md_date.month, end_md_date.day)
+            mask = (weather_df['time'].dt.date >= s_date) & (weather_df['time'].dt.date <= e_date)
+            df_y = weather_df[mask].copy()
+            if not df_y.empty:
+                df_y['cum_precip'] = df_y['precipitation_sum'].fillna(0).cumsum()
+                df_y['対象年/シーズン'] = f"{y}/{y+1}シーズン" if is_cross_year else f"{y}年"
+                all_weather_data.append(df_y)
+
+        if all_weather_data:
+            csv_df = pd.concat(all_weather_data)
+            csv_df = csv_df[['対象年/シーズン', 'time', 'temperature_2m_mean', 'precipitation_sum', 'cum_precip']]
+            csv_df.rename(columns={'time':'日付', 'temperature_2m_mean':'日平均気温(℃)', 'precipitation_sum':'日降水量(mm)', 'cum_precip':'積算降水量(mm)'}, inplace=True)
+            csv_df['日付'] = csv_df['日付'].dt.strftime('%Y/%m/%d')
+            st.divider()
+            st.download_button("📥 複数年比較の気象データをCSVでダウンロード", csv_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'), file_name=f"weather_multiyear_{loc_name}.csv", mime="text/csv")
+
         st.stop()
 
 
     # ────────────────────────────────────────────────────────
     # 単一日の判定
     # ────────────────────────────────────────────────────────
-    elif analysis_mode == "単一日の判定":
+    elif analysis_mode == "🦠 リスク判定: 単一日の判定":
         with st.spinner("気象データを取得・解析中..."):
             if data_source == "Open-Meteo (API自動取得)":
                 try: weather_df = fetch_weather_data(lat, lon, planting_date, pre_fetch_days=antecedent_days + 5)
@@ -544,11 +658,7 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
                 try: weather_df = parse_amedas_text(pasted_data)
                 except Exception as e: st.error(e); st.stop()
 
-        res = calculate_scab_risk(
-            planting_date, weather_df, base_temp, gdd_start, gdd_end,
-            threshold_high, threshold_med, use_antecedent, antecedent_days, antecedent_relief_mm,
-            use_low_temp, low_temp_threshold, low_temp_days
-        )
+        res = calculate_scab_risk(planting_date, weather_df, base_temp, gdd_start, gdd_end, threshold_high, threshold_med, use_antecedent, antecedent_days, antecedent_relief_mm, use_low_temp, low_temp_threshold, low_temp_days)
 
         if res is None: st.warning("指定日の気象データが存在しません。"); st.stop()
         if res['status'] != '判定完了':
@@ -581,15 +691,13 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
         """, unsafe_allow_html=True)
 
         st.subheader("📈 気象データの推移（リスク期を強調表示）")
-        plot_span = (res['end_date_w'] - res['start_date_w']).days
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
         fig.patch.set_facecolor("#0e1117")
         for ax in (ax1, ax2):
             ax.set_facecolor("#1a1d24"); ax.tick_params(colors="white")
             for spine in ax.spines.values(): spine.set_color("#444")
 
-        r_start = matplotlib.dates.date2num(res['start_date_w'])
-        r_end   = matplotlib.dates.date2num(res['end_date_w'])
+        r_start, r_end = matplotlib.dates.date2num(res['start_date_w']), matplotlib.dates.date2num(res['end_date_w'])
         def highlight_risk(ax, col):
             ax.axvspan(r_start, r_end, color=col, alpha=0.15, label="感染リスク期")
             ax.axvline(r_start, color=col, linestyle="--", linewidth=1.2, alpha=0.8)
@@ -621,7 +729,7 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
 
         ax2.set_ylabel("日降水量 (mm)", color="white")
         ax2.set_xlabel("日付", color="white")
-        apply_date_axis(ax2, span_days=plot_span)
+        apply_date_axis(ax2, span_days=(res['end_date_w'] - res['start_date_w']).days)
         plt.tight_layout()
         st.pyplot(fig)
 
@@ -629,7 +737,7 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
     # ────────────────────────────────────────────────────────
     # 植え付け期間分析
     # ────────────────────────────────────────────────────────
-    elif analysis_mode == "植え付け期間分析":
+    elif analysis_mode == "🦠 リスク判定: 植え付け期間分析":
         with st.spinner("気象データを取得・解析中..."):
             if data_source == "Open-Meteo (API自動取得)":
                 try: weather_df = fetch_weather_data(lat, lon, planting_date, analysis_end_date, pre_fetch_days=antecedent_days + 5)
@@ -640,8 +748,7 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
                 except Exception as e: st.error(e); st.stop()
 
         date_list = [planting_date + timedelta(days=x) for x in range((analysis_end_date - planting_date).days + 1)]
-        results_list = []
-        bar = st.progress(0)
+        results_list, bar = [], st.progress(0)
 
         for i, p_date in enumerate(date_list):
             res = calculate_scab_risk(p_date, weather_df, base_temp, gdd_start, gdd_end, threshold_high, threshold_med, use_antecedent, antecedent_days, antecedent_relief_mm, use_low_temp, low_temp_threshold, low_temp_days)
@@ -655,11 +762,14 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
         st.subheader("📈 植え付け日による感染リスクの変化")
         st.pyplot(plot_period_analysis(results_df, threshold_high, threshold_med))
 
+        csv_data = build_csv(results_df, antecedent_days)
+        st.download_button("📥 期間分析結果をCSVでダウンロード", csv_data, file_name=f"scab_risk_period_{loc_name}.csv", mime="text/csv")
+
 
     # ────────────────────────────────────────────────────────
     # 複数年比較分析
     # ────────────────────────────────────────────────────────
-    elif analysis_mode == "複数年比較分析":
+    elif analysis_mode == "🦠 リスク判定: 複数年比較分析":
         if not compare_years: st.error("⚠️ 比較する年を選択してください。"); st.stop()
 
         is_cross_year = (start_md_date.month > end_md_date.month) or (start_md_date.month == end_md_date.month and start_md_date.day > end_md_date.day)
@@ -704,3 +814,7 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
         for season_label in sorted(results_df['target_year'].unique()):
             st.markdown(f"**{season_label}**")
             st.pyplot(plot_period_analysis(results_df[results_df['target_year'] == season_label], threshold_high, threshold_med, title_suffix=season_label))
+
+        csv_data = build_csv(results_df, antecedent_days)
+        st.divider()
+        st.download_button("📥 複数年比較の全分析結果をCSVでダウンロード", csv_data, file_name=f"scab_risk_multiyear_{loc_name}.csv", mime="text/csv")
