@@ -43,9 +43,9 @@ RISK_MAP = {
 st.set_page_config(page_title="そうか病 感染リスク判定・期間分析", layout="wide")
 st.title("🌱 そうか病 感染リスク判定システム")
 st.markdown("""
-マルチ栽培を前提とし、植え付け日からの積算温度で塊茎の初期肥大期を推定します。  
-**積算温度が設定GDD閾値**の期間を「感染リスク期」とし、その間の降水量でリスクを判定します。  
-⚠️ **判定基準**: そうか病は乾燥条件で感染拡大するため、リスク期の**降水量が少ないほど高リスク**と判定します。  
+マルチ栽培を前提とし、塊茎の初期肥大期を推定して「感染リスク期」とします。  
+このリスク期の降水量が少ないほど（乾燥条件）、そうか病の感染リスクが高まると判定します。  
+⏱️ **期間の推定**: 「積算温度(GDD)」または「植え付け後の経過日数」を選択できます。  
 💧 **先行降水補正**: 植え付け前の降水量が多い場合、初期土壌水分が高いとみなしリスクを1段階軽減します。  
 ❄️ **低温補正**: リスク期に地上2m気温（地温の代替指標）が低い日が続く場合、病原菌の活動が抑制されるためリスクを1段階軽減します。
 """)
@@ -169,9 +169,20 @@ if not analysis_mode.startswith("📊"):
     base_temp = st.sidebar.number_input("ベース温度 (℃)", min_value=0.0, max_value=15.0, value=7.0, step=0.5)
 
     st.sidebar.divider()
-    st.sidebar.header("⚙️ GDD閾値")
-    gdd_start = st.sidebar.number_input("開始 GDD", value=300, step=10)
-    gdd_end   = st.sidebar.number_input("終了 GDD", value=600, step=10)
+    st.sidebar.header("⏱️ リスク期間の推定方法")
+    risk_period_method = st.sidebar.radio(
+        "推定方法を選択",
+        ["積算温度(GDD)で推定", "植え付け後日数で指定"]
+    )
+
+    if risk_period_method == "積算温度(GDD)で推定":
+        gdd_start = st.sidebar.number_input("開始 GDD", value=300, step=10)
+        gdd_end   = st.sidebar.number_input("終了 GDD", value=600, step=10)
+        risk_day_start, risk_day_end = 40, 70 # 内部用ダミー
+    else:
+        risk_day_start = st.sidebar.number_input("開始日数 (植え付け後 日数)", value=40, step=1)
+        risk_day_end   = st.sidebar.number_input("終了日数 (植え付け後 日数)", value=70, step=1)
+        gdd_start, gdd_end = 300, 600 # 内部用ダミー
 
     st.sidebar.divider()
     st.sidebar.header("🌧️ リスク判定閾値（降水量）")
@@ -288,23 +299,38 @@ def parse_amedas_text(text_data):
 # ============================================================
 # リスク計算関数
 # ============================================================
-def calculate_scab_risk(p_date, weather_df, b_temp, g_start, g_end, t_high, t_med, use_ante, ante_days, ante_relief_mm, use_temp, temp_thresh, temp_days):
+def calculate_scab_risk(p_date, weather_df, b_temp, g_start, g_end, t_high, t_med, use_ante, ante_days, ante_relief_mm, use_temp, temp_thresh, temp_days, risk_method="積算温度(GDD)で推定", day_start=40, day_end=70):
     df_after = weather_df[weather_df['time'] >= pd.Timestamp(p_date)].copy()
     if df_after.empty: return None
 
     df_after['gdd_daily'] = (df_after['temperature_2m_mean'].fillna(0) - b_temp).clip(lower=0)
     df_after['gdd_cum']   = df_after['gdd_daily'].cumsum()
 
-    start_w = df_after[df_after['gdd_cum'] >= g_start]
-    if start_w.empty:
-        last_date, today = df_after['time'].iloc[-1].date(), date.today()
-        if last_date >= today + timedelta(days=15): return {'status': 'GDD未到達（データ不足）', 'planting_date': p_date}
-        else: return {'status': 'GDD未到達（予報期間外）', 'planting_date': p_date}
+    # 期間の特定ロジック分岐
+    if risk_method == "積算温度(GDD)で推定":
+        start_w = df_after[df_after['gdd_cum'] >= g_start]
+        if start_w.empty:
+            last_date, today = df_after['time'].iloc[-1].date(), date.today()
+            if last_date >= today + timedelta(days=15): return {'status': 'GDD未到達（データ不足）', 'planting_date': p_date}
+            else: return {'status': 'GDD未到達（予報期間外）', 'planting_date': p_date}
 
-    start_date_w = start_w.iloc[0]['time']
-    end_w        = df_after[df_after['gdd_cum'] >= g_end]
-    reached_end  = not end_w.empty
-    end_date_w   = end_w.iloc[0]['time'] if reached_end else df_after['time'].iloc[-1]
+        start_date_w = start_w.iloc[0]['time']
+        end_w        = df_after[df_after['gdd_cum'] >= g_end]
+        reached_end  = not end_w.empty
+        end_date_w   = end_w.iloc[0]['time'] if reached_end else df_after['time'].iloc[-1]
+    
+    else: # 植え付け後日数で指定
+        start_date_w = pd.Timestamp(p_date) + pd.Timedelta(days=day_start)
+        target_end_date = pd.Timestamp(p_date) + pd.Timedelta(days=day_end)
+        
+        if start_date_w > df_after['time'].max():
+            last_date, today = df_after['time'].iloc[-1].date(), date.today()
+            if last_date >= today + timedelta(days=15): return {'status': '開始日数未到達（データ不足）', 'planting_date': p_date}
+            else: return {'status': '開始日数未到達（予報期間外）', 'planting_date': p_date}
+
+        reached_end = target_end_date <= df_after['time'].max()
+        end_date_w = target_end_date if reached_end else df_after['time'].max()
+
 
     risk_df      = df_after[(df_after['time'] >= start_date_w) & (df_after['time'] <= end_date_w)]
     total_days_in_risk  = len(risk_df)
@@ -517,7 +543,7 @@ def build_csv(results_df: pd.DataFrame, ante_days: int) -> bytes:
     if 'antecedent_precip' in show_df: show_df['antecedent_precip'] = show_df['antecedent_precip'].round(1)
     if 'base_risk_value'   in show_df: show_df['base_risk_value'] = show_df['base_risk_value'].map({2: '高(High)', 1: '中(Medium)', 0: '低(Low)'})
     
-    show_df.rename(columns={'target_year':'対象年', 'planting_date':'植え付け日', 'start_date_w':'リスク期開始日', 'end_date_w':'リスク期終了日', 'reached_end':'GDD終了閾値到達', 'antecedent_precip':f'先行{ante_days}日間降水量(mm)', 'ante_corrected':'先行降水補正', 'low_temp_count':'リスク期 低温日数(日)', 'temp_corrected':'低温補正', 'total_precip':'リスク期積算降水量(mm)', 'missing_precip_days':'リスク期 降水欠測日数(日)', 'base_risk_value':'基本リスク(補正前)', 'risk_level':'リスクレベル(補正後)'}, inplace=True)
+    show_df.rename(columns={'target_year':'対象年', 'planting_date':'植え付け日', 'start_date_w':'リスク期開始日', 'end_date_w':'リスク期終了日', 'reached_end':'期間終了到達', 'antecedent_precip':f'先行{ante_days}日間降水量(mm)', 'ante_corrected':'先行降水補正', 'low_temp_count':'リスク期 低温日数(日)', 'temp_corrected':'低温補正', 'total_precip':'リスク期積算降水量(mm)', 'missing_precip_days':'リスク期 降水欠測日数(日)', 'base_risk_value':'基本リスク(補正前)', 'risk_level':'リスクレベル(補正後)'}, inplace=True)
     return show_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
 
 
@@ -528,8 +554,12 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
 
     # 病気リスク判定用のバリデーション
     if not analysis_mode.startswith("📊"):
-        if gdd_start >= gdd_end: st.error("GDD開始閾値は終了閾値より小さい値を設定してください。"); st.stop()
-        if threshold_high >= threshold_med: st.error("高リスク境界値は中リスク境界値より小さい値を設定してください。"); st.stop()
+        if risk_period_method == "積算温度(GDD)で推定" and gdd_start >= gdd_end: 
+            st.error("GDD開始閾値は終了閾値より小さい値を設定してください。"); st.stop()
+        if risk_period_method == "植え付け後日数で指定" and risk_day_start >= risk_day_end:
+            st.error("開始日数は終了日数より小さい値を設定してください。"); st.stop()
+        if threshold_high >= threshold_med: 
+            st.error("高リスク境界値は中リスク境界値より小さい値を設定してください。"); st.stop()
 
     # ────────────────────────────────────────────────────────
     # 🌟 単一期間の気象データ表示
@@ -651,11 +681,17 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
                 try: weather_df = parse_amedas_text(pasted_data)
                 except Exception as e: st.error(e); st.stop()
 
-        res = calculate_scab_risk(planting_date, weather_df, base_temp, gdd_start, gdd_end, threshold_high, threshold_med, use_antecedent, antecedent_days, antecedent_relief_mm, use_low_temp, low_temp_threshold, low_temp_days)
+        res = calculate_scab_risk(
+            planting_date, weather_df, base_temp, gdd_start, gdd_end, 
+            threshold_high, threshold_med, use_antecedent, antecedent_days, 
+            antecedent_relief_mm, use_low_temp, low_temp_threshold, low_temp_days,
+            risk_period_method, risk_day_start, risk_day_end
+        )
 
         if res is None: st.warning("指定日の気象データが存在しません。"); st.stop()
         if res['status'] != '判定完了':
-            if res['status'] == 'GDD未到達（予報期間外）': st.warning(f"⚠️ {planting_date.strftime('%Y/%m/%d')} 植え付けでは、予報期間内にGDD到達しません。")
+            if res['status'] in ['GDD未到達（予報期間外）', '開始日数未到達（予報期間外）']: 
+                st.warning(f"⚠️ {planting_date.strftime('%Y/%m/%d')} 植え付けでは、予報期間内に条件（{res['status'].split('（')[0]}）に到達しません。")
             else: st.warning(f"リスク期に達していません: {res['status']}")
             st.stop()
 
@@ -664,8 +700,14 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
         st.info("ℹ️ リスク期の降水量が少ないほど **高リスク（乾燥条件）** と判定します。")
 
         col1, col2, col3, col4, col5 = st.columns(5)
-        col1.metric("リスク期 開始", res['start_date_w'].strftime('%Y/%m/%d'), f"{gdd_start} GDD")
-        col2.metric("リスク期 終了", res['end_date_w'].strftime('%Y/%m/%d'), f"{gdd_end} GDD" if res['reached_end'] else "進行中/予報端")
+        
+        if risk_period_method == "積算温度(GDD)で推定":
+            col1.metric("リスク期 開始", res['start_date_w'].strftime('%Y/%m/%d'), f"{gdd_start} GDD")
+            col2.metric("リスク期 終了", res['end_date_w'].strftime('%Y/%m/%d'), f"{gdd_end} GDD" if res['reached_end'] else "進行中/予報端")
+        else:
+            col1.metric("リスク期 開始", res['start_date_w'].strftime('%Y/%m/%d'), f"{risk_day_start}日後")
+            col2.metric("リスク期 終了", res['end_date_w'].strftime('%Y/%m/%d'), f"{risk_day_end}日後" if res['reached_end'] else "進行中/予報端")
+            
         col3.metric("リスク期 積算降水量", f"{res['total_precip']:.1f} mm")
         col4.metric(f"低温日数（≤{low_temp_threshold}℃）", f"{res['low_temp_count']} 日")
         col5.metric(f"先行{antecedent_days}日間 降水量", f"{res['antecedent_precip']:.1f} mm" if res['ante_available'] else "データなし")
@@ -697,8 +739,12 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
             ax.axvline(r_end, color=col, linestyle="--", linewidth=1.2, alpha=0.8)
 
         ax1.plot(res['plot_df']['time'], res['plot_df']['gdd_cum'], color="#00d4aa", linewidth=2, label="積算GDD")
-        ax1.axhline(gdd_start, color="#ffcc00", linestyle=":", linewidth=1, alpha=0.7, label=f"GDD開始 {gdd_start}")
-        ax1.axhline(gdd_end,   color="#ff8800", linestyle=":", linewidth=1, alpha=0.7, label=f"GDD終了 {gdd_end}")
+        
+        # GDDモードのときだけGDDの水平線を描画
+        if risk_period_method == "積算温度(GDD)で推定":
+            ax1.axhline(gdd_start, color="#ffcc00", linestyle=":", linewidth=1, alpha=0.7, label=f"GDD開始 {gdd_start}")
+            ax1.axhline(gdd_end,   color="#ff8800", linestyle=":", linewidth=1, alpha=0.7, label=f"GDD終了 {gdd_end}")
+            
         highlight_risk(ax1, res['risk_color'])
         ax1.set_ylabel("積算温度 (℃·day)", color="white")
         ax1.legend(loc="upper left", facecolor="#1a1d24", labelcolor="white")
@@ -744,7 +790,12 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
         results_list, bar = [], st.progress(0)
 
         for i, p_date in enumerate(date_list):
-            res = calculate_scab_risk(p_date, weather_df, base_temp, gdd_start, gdd_end, threshold_high, threshold_med, use_antecedent, antecedent_days, antecedent_relief_mm, use_low_temp, low_temp_threshold, low_temp_days)
+            res = calculate_scab_risk(
+                p_date, weather_df, base_temp, gdd_start, gdd_end, 
+                threshold_high, threshold_med, use_antecedent, antecedent_days, 
+                antecedent_relief_mm, use_low_temp, low_temp_threshold, low_temp_days,
+                risk_period_method, risk_day_start, risk_day_end
+            )
             if res: results_list.append({k: v for k, v in res.items() if k not in {'risk_df', 'plot_df'}})
             if i % max(1, len(date_list)//20) == 0: bar.progress((i+1)/len(date_list), text=f"分析中... {p_date.strftime('%Y/%m/%d')}")
         bar.empty()
@@ -789,7 +840,12 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
         for y in sorted(compare_years):
             season_label = f"{y}/{y+1}シーズン" if is_cross_year else f"{y}年"
             for p_date in date_lists[y]:
-                res = calculate_scab_risk(p_date, weather_df, base_temp, gdd_start, gdd_end, threshold_high, threshold_med, use_antecedent, antecedent_days, antecedent_relief_mm, use_low_temp, low_temp_threshold, low_temp_days)
+                res = calculate_scab_risk(
+                    p_date, weather_df, base_temp, gdd_start, gdd_end, 
+                    threshold_high, threshold_med, use_antecedent, antecedent_days, 
+                    antecedent_relief_mm, use_low_temp, low_temp_threshold, low_temp_days,
+                    risk_period_method, risk_day_start, risk_day_end
+                )
                 if res:
                     row = {k: v for k, v in res.items() if k not in {'risk_df', 'plot_df'}}
                     row['target_year'] = season_label
