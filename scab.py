@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import requests
 from datetime import datetime, timedelta, date
 import matplotlib
@@ -206,7 +207,9 @@ analysis_mode = st.sidebar.radio(
     [
         "🦠 リスク判定: 単一日の判定",
         "🦠 リスク判定: 植え付け期間分析",
-        "🦠 リスク判定: 複数年比較分析"
+        "🦠 リスク判定: 複数年比較分析",
+        "📊 集計: 旬別の積算降水量 (期間指定)",
+        "🎯 最適化: 発生率データによるリスク期推定"
     ]
 )
 
@@ -223,7 +226,7 @@ st.sidebar.divider()
 bw_mode = False
 
 # ============================================================
-# 分析モード別の日付設定UI
+# 分析モード別の日付・最適化設定UI
 # ============================================================
 if analysis_mode == "🦠 リスク判定: 単一日の判定":
     planting_date     = st.sidebar.date_input("植え付け日", date(2025, 9, 30))
@@ -256,30 +259,76 @@ elif analysis_mode == "🦠 リスク判定: 複数年比較分析":
     overlay_mode = st.sidebar.radio("複数年比較グラフの表示モード", ["🌈 通常（カラー）", "🖨️ 白黒印刷用"], horizontal=True)
     bw_mode = (overlay_mode == "🖨️ 白黒印刷用")
 
-st.sidebar.divider()
-st.sidebar.header("🌱 栽培パラメータ")
-base_temp = st.sidebar.number_input("ベース温度 (℃)", min_value=0.0, max_value=15.0, value=7.0, step=0.5)
+elif analysis_mode == "📊 集計: 旬別の積算降水量 (期間指定)":
+    st.sidebar.markdown("### 集計期間の設定")
+    agg_period = st.sidebar.date_input(
+        "期間（開始日〜終了日）",
+        (date(2025, 9, 1), date(2026, 5, 31))
+    )
+    if isinstance(agg_period, (tuple, list)) and len(agg_period) == 2:
+        agg_start_date, agg_end_date = agg_period[0], agg_period[1]
+    else:
+        agg_start_date = agg_period[0] if isinstance(agg_period, (tuple, list)) else agg_period
+        agg_end_date = agg_start_date
+        st.sidebar.warning("終了日を選択してください。")
 
-st.sidebar.divider()
-st.sidebar.header("⏱️ リスク期間の推定方法")
-risk_period_method = st.sidebar.radio(
-    "推定方法を選択",
-    ["積算温度(GDD)で推定", "植え付け後日数で指定"]
-)
+elif analysis_mode == "🎯 最適化: 発生率データによるリスク期推定":
+    st.sidebar.markdown("### 最適化パラメータの探索範囲")
+    st.sidebar.caption("※ 探索範囲が広すぎると計算に時間がかかります")
+    
+    risk_period_method = st.sidebar.radio("ベースとなる推定方法", ["積算温度(GDD)で推定", "植え付け後日数で指定"])
+    
+    if risk_period_method == "積算温度(GDD)で推定":
+        st.sidebar.markdown("**開始GDD 探索範囲**")
+        opt_start_min = st.sidebar.number_input("開始 最小値", value=200, step=10)
+        opt_start_max = st.sidebar.number_input("開始 最大値", value=400, step=10)
+        opt_start_step = st.sidebar.number_input("開始 ステップ幅", value=20, step=5)
+        
+        st.sidebar.markdown("**終了GDD 探索範囲**")
+        opt_end_min = st.sidebar.number_input("終了 最小値", value=450, step=10)
+        opt_end_max = st.sidebar.number_input("終了 最大値", value=750, step=10)
+        opt_end_step = st.sidebar.number_input("終了 ステップ幅", value=20, step=5)
+    else:
+        st.sidebar.markdown("**開始日数 探索範囲**")
+        opt_start_min = st.sidebar.number_input("開始 最小値", value=20, step=1)
+        opt_start_max = st.sidebar.number_input("開始 最大値", value=50, step=1)
+        opt_start_step = st.sidebar.number_input("開始 ステップ幅", value=5, step=1)
+        
+        st.sidebar.markdown("**終了日数 探索範囲**")
+        opt_end_min = st.sidebar.number_input("終了 最小値", value=60, step=1)
+        opt_end_max = st.sidebar.number_input("終了 最大値", value=90, step=1)
+        opt_end_step = st.sidebar.number_input("終了 ステップ幅", value=5, step=1)
 
-if risk_period_method == "積算温度(GDD)で推定":
-    gdd_start = st.sidebar.number_input("開始 GDD", value=300, step=10)
-    gdd_end   = st.sidebar.number_input("終了 GDD", value=600, step=10)
-    risk_day_start, risk_day_end = 40, 70
-else:
-    risk_day_start = st.sidebar.number_input("開始日数 (植え付け後 日数)", value=40, step=1)
-    risk_day_end   = st.sidebar.number_input("終了日数 (植え付け後 日数)", value=70, step=1)
-    gdd_start, gdd_end = 300, 600
+# 「最適化」以外の場合の基本リスク期間設定
+if analysis_mode not in ["🎯 最適化: 発生率データによるリスク期推定", "📊 集計: 旬別の積算降水量 (期間指定)"]:
+    st.sidebar.divider()
+    st.sidebar.header("🌱 栽培パラメータ")
+    base_temp = st.sidebar.number_input("ベース温度 (℃)", min_value=0.0, max_value=15.0, value=7.0, step=0.5)
 
-st.sidebar.divider()
-st.sidebar.header("🌧️ リスク判定閾値（降水量）")
-threshold_high = st.sidebar.number_input("高リスク境界値 (mm)", value=THRESHOLD_HIGH_DEFAULT)
-threshold_med  = st.sidebar.number_input("中リスク境界値 (mm)", value=THRESHOLD_MED_DEFAULT)
+    st.sidebar.divider()
+    st.sidebar.header("⏱️ リスク期間の推定方法")
+    risk_period_method = st.sidebar.radio(
+        "推定方法を選択",
+        ["積算温度(GDD)で推定", "植え付け後日数で指定"]
+    )
+
+    if risk_period_method == "積算温度(GDD)で推定":
+        gdd_start = st.sidebar.number_input("開始 GDD", value=300, step=10)
+        gdd_end   = st.sidebar.number_input("終了 GDD", value=600, step=10)
+        risk_day_start, risk_day_end = 40, 70
+    else:
+        risk_day_start = st.sidebar.number_input("開始日数 (植え付け後 日数)", value=40, step=1)
+        risk_day_end   = st.sidebar.number_input("終了日数 (植え付け後 日数)", value=70, step=1)
+        gdd_start, gdd_end = 300, 600
+
+    st.sidebar.divider()
+    st.sidebar.header("🌧️ リスク判定閾値（降水量）")
+    threshold_high = st.sidebar.number_input("高リスク境界値 (mm)", value=THRESHOLD_HIGH_DEFAULT)
+    threshold_med  = st.sidebar.number_input("中リスク境界値 (mm)", value=THRESHOLD_MED_DEFAULT)
+elif analysis_mode == "🎯 最適化: 発生率データによるリスク期推定":
+    st.sidebar.divider()
+    st.sidebar.header("🌱 栽培パラメータ")
+    base_temp = st.sidebar.number_input("ベース温度 (℃)", min_value=0.0, max_value=15.0, value=7.0, step=0.5)
 
 
 # ============================================================
@@ -313,6 +362,16 @@ def get_safe_date(year, month, day):
     except ValueError:
         if month == 2 and day == 29: return date(year, 2, 28)
         raise
+
+def get_jun_label(d):
+    if d <= 10: return "上旬"
+    elif d <= 20: return "中旬"
+    else: return "下旬"
+
+def get_jun_idx(d):
+    if d <= 10: return 1
+    elif d <= 20: return 2
+    else: return 3
 
 # ============================================================
 # 気象データ取得 (Open-Meteo)
@@ -434,7 +493,9 @@ def calculate_scab_risk(p_date, weather_df, b_temp, g_start, g_end, t_high, t_me
 
     return res
 
-
+# ============================================================
+# プロットユーティリティ
+# ============================================================
 def apply_date_axis(ax, span_days=None):
     interval = 10
     if span_days is not None:
@@ -446,7 +507,6 @@ def apply_date_axis(ax, span_days=None):
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
     for lbl in ax.get_xticklabels():
         lbl.set_rotation(45); lbl.set_ha('right'); lbl.set_color('white')
-
 
 def plot_period_analysis(results_df, t_high, t_med, title_suffix=""):
     fig, ax = plt.subplots(figsize=(12, 6))
@@ -485,7 +545,6 @@ def plot_period_analysis(results_df, t_high, t_med, title_suffix=""):
     ax.legend(handles=handles, loc="best", facecolor="#1a1d24", labelcolor="white")
     plt.tight_layout()
     return fig
-
 
 def plot_multiyear_overlay(results_df, t_high, t_med, compare_years, start_md_date, bw_mode=False):
     BW_STYLES    = [("-",1.8,"o",7,"none"), ("--",1.8,"v",8,"none"), ("-.",1.8,"s",7,"none"), (":",2.0,"D",7,"none"), ("-",1.8,"^",8,"full")]
@@ -561,7 +620,6 @@ def plot_multiyear_overlay(results_df, t_high, t_med, compare_years, start_md_da
     plt.tight_layout()
     return fig
 
-
 def build_csv(results_df: pd.DataFrame) -> bytes:
     cols_src = ['target_year', 'planting_date', 'start_date_w', 'end_date_w', 'reached_end',
                 'total_precip', 'total_precip_normal', 'missing_precip_days', 'risk_level']
@@ -586,16 +644,32 @@ def build_csv(results_df: pd.DataFrame) -> bytes:
 
 
 # ============================================================
-# 実行処理
+# 実行処理 UI - 最適化向けテキスト入力領域
+# ============================================================
+if analysis_mode == "🎯 最適化: 発生率データによるリスク期推定":
+    st.subheader("📝 実測データの入力")
+    st.markdown("植え付け日と、その結果発生した「そうか病発生率(%)」のペアをカンマ区切りで入力してください。（1行に1データ）")
+    default_text = """2023/09/20, 45.0
+2023/09/25, 30.5
+2023/10/01, 15.2
+2024/09/15, 55.0
+2024/09/28, 20.1
+2024/10/05, 5.0"""
+    incidence_input = st.text_area("植え付け日, 発生率(%)", value=default_text, height=150)
+
+
+# ============================================================
+# 実行メインロジック
 # ============================================================
 if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
 
-    if risk_period_method == "積算温度(GDD)で推定" and gdd_start >= gdd_end:
-        st.error("GDD開始閾値は終了閾値より小さい値を設定してください。"); st.stop()
-    if risk_period_method == "植え付け後日数で指定" and risk_day_start >= risk_day_end:
-        st.error("開始日数は終了日数より小さい値を設定してください。"); st.stop()
-    if threshold_high >= threshold_med:
-        st.error("高リスク境界値は中リスク境界値より小さい値を設定してください。"); st.stop()
+    if analysis_mode not in ["🎯 最適化: 発生率データによるリスク期推定", "📊 集計: 旬別の積算降水量 (期間指定)"]:
+        if risk_period_method == "積算温度(GDD)で推定" and gdd_start >= gdd_end:
+            st.error("GDD開始閾値は終了閾値より小さい値を設定してください。"); st.stop()
+        if risk_period_method == "植え付け後日数で指定" and risk_day_start >= risk_day_end:
+            st.error("開始日数は終了日数より小さい値を設定してください。"); st.stop()
+        if threshold_high >= threshold_med:
+            st.error("高リスク境界値は中リスク境界値より小さい値を設定してください。"); st.stop()
 
     # ──────────────────────────────────────────────────────
     # 🦠 単一日の判定
@@ -793,3 +867,198 @@ if st.sidebar.button("▶ 実行 (分析・表示)", type="primary"):
         st.divider()
         st.download_button("📥 複数年比較の全分析結果をCSVでダウンロード", csv_data,
                            file_name=f"scab_risk_multiyear_{loc_name}.csv", mime="text/csv")
+
+
+    # ──────────────────────────────────────────────────────
+    # 📊 集計: 旬別の積算降水量 (期間指定)
+    # ──────────────────────────────────────────────────────
+    elif analysis_mode == "📊 集計: 旬別の積算降水量 (期間指定)":
+        if agg_start_date > agg_end_date:
+            st.error("⚠️ 終了日は開始日以降の日付を選択してください。"); st.stop()
+
+        with st.spinner("気象データを取得・解析中..."):
+            if data_source == "Open-Meteo (API自動取得)":
+                try: weather_df = fetch_weather_data(lat, lon, agg_start_date, agg_end_date, pre_fetch_days=0)
+                except Exception as e: st.error(e); st.stop()
+            else:
+                try: weather_df = load_amedas_weather_df(pasted_data)
+                except Exception as e: st.error(e); st.stop()
+
+        df = weather_df.copy()
+        df = df[(df['time'].dt.date >= agg_start_date) & (df['time'].dt.date <= agg_end_date)]
+        
+        if df.empty:
+            st.warning("指定された期間のデータが存在しません。")
+            st.stop()
+
+        df['year']  = df['time'].dt.year
+        df['month'] = df['time'].dt.month
+        df['jun_idx'] = df['time'].dt.day.apply(get_jun_idx)
+        
+        # 年・月・旬ごとに合計
+        jun_df = df.groupby(['year', 'month', 'jun_idx']).agg({
+            'precipitation_sum': 'sum'
+        }).reset_index()
+
+        # データに平年値が含まれる場合は合算
+        has_normal = 'precipitation_sum_normal' in df.columns and not df['precipitation_sum_normal'].isna().all()
+        if has_normal:
+            normal_df = df.groupby(['year', 'month', 'jun_idx']).agg({
+                'precipitation_sum_normal': 'sum'
+            }).reset_index()
+            jun_df = pd.merge(jun_df, normal_df, on=['year', 'month', 'jun_idx'])
+        
+        # 時系列順にソート
+        jun_df = jun_df.sort_values(['year', 'month', 'jun_idx']).reset_index(drop=True)
+        
+        # 表示用ラベル
+        jun_map = {1: '上旬', 2: '中旬', 3: '下旬'}
+        jun_df['label'] = jun_df.apply(lambda r: f"{int(r['year'])}年{int(r['month'])}月{jun_map[r['jun_idx']]}", axis=1)
+        jun_df['short_label'] = jun_df.apply(lambda r: f"{int(r['month'])}/{jun_map[r['jun_idx']][0]}", axis=1)
+
+        st.subheader("📊 指定期間の旬別 積算降水量")
+        st.caption(f"対象期間: {agg_start_date.strftime('%Y/%m/%d')} 〜 {agg_end_date.strftime('%Y/%m/%d')} ／ 地点: {loc_name}")
+
+        fig, ax = plt.subplots(figsize=(12, 5))
+        fig.patch.set_facecolor("#0e1117"); ax.set_facecolor("#1a1d24"); ax.tick_params(colors="white")
+        for spine in ax.spines.values(): spine.set_color("#444")
+        
+        x_pos = np.arange(len(jun_df))
+        bars = ax.bar(x_pos, jun_df['precipitation_sum'], color="#4a90d9", alpha=0.85, label="積算降水量")
+        
+        if has_normal:
+            ax.plot(x_pos, jun_df['precipitation_sum_normal'], color="#00d4aa", marker="o", linestyle="--", linewidth=2, label="平年値")
+
+        ax.set_ylabel("積算降水量 (mm)", color="white")
+        ax.set_xticks(x_pos)
+        
+        if len(jun_df) > 15:
+            ax.set_xticklabels(jun_df['short_label'], rotation=45, ha='right')
+        else:
+            ax.set_xticklabels(jun_df['label'], rotation=45, ha='right')
+        
+        for bar in bars:
+            yval = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2, yval + 1, f"{yval:.1f}", ha='center', va='bottom', color="white", fontsize=8)
+
+        ax.legend(facecolor="#1a1d24", labelcolor="white")
+        plt.tight_layout()
+        st.pyplot(fig)
+        
+        out_cols = {'label': '時期', 'precipitation_sum': '積算降水量(mm)'}
+        if has_normal: out_cols['precipitation_sum_normal'] = '平年値(mm)'
+        st.dataframe(jun_df[list(out_cols.keys())].rename(columns=out_cols), use_container_width=True)
+
+
+    # ──────────────────────────────────────────────────────
+    # 🎯 最適化: 発生率データによるリスク期推定
+    # ──────────────────────────────────────────────────────
+    elif analysis_mode == "🎯 最適化: 発生率データによるリスク期推定":
+        if not incidence_input.strip():
+            st.error("⚠️ 実測データを入力してください。"); st.stop()
+            
+        try:
+            parsed_data = []
+            for line in incidence_input.split('\n'):
+                if not line.strip(): continue
+                parts = line.split(',')
+                if len(parts) == 2:
+                    parsed_data.append({
+                        'planting_date': pd.to_datetime(parts[0].strip()),
+                        'rate': float(parts[1].strip())
+                    })
+            incidence_df = pd.DataFrame(parsed_data)
+        except Exception as e:
+            st.error(f"データのパースに失敗しました。カンマ区切りで正しく入力されているか確認してください。\n詳細: {e}"); st.stop()
+
+        min_date = incidence_df['planting_date'].min()
+        max_date = incidence_df['planting_date'].max()
+
+        with st.spinner("対象期間の気象データを取得中..."):
+            if data_source == "Open-Meteo (API自動取得)":
+                try: weather_df = fetch_weather_data(lat, lon, min_date.date(), max_date.date(), pre_fetch_days=5)
+                except Exception as e: st.error(e); st.stop()
+            else:
+                try: weather_df = load_amedas_weather_df(pasted_data)
+                except Exception as e: st.error(e); st.stop()
+
+        start_vals = list(range(opt_start_min, opt_start_max + 1, opt_start_step))
+        end_vals   = list(range(opt_end_min, opt_end_max + 1, opt_end_step))
+        total_iters = len(start_vals) * len(end_vals)
+        
+        st.info(f"パラメータ探索を開始します（全 {total_iters} パターン）。少々お待ちください...")
+        bar = st.progress(0)
+        
+        results = []
+        iter_count = 0
+        
+        for s_val in start_vals:
+            for e_val in end_vals:
+                iter_count += 1
+                if iter_count % 10 == 0:
+                    bar.progress(iter_count / total_iters)
+                    
+                if s_val >= e_val: continue
+                
+                precips = []
+                valid = True
+                for _, row in incidence_df.iterrows():
+                    p_date = row['planting_date']
+                    if risk_period_method == "積算温度(GDD)で推定":
+                        res = calculate_scab_risk(p_date, weather_df, base_temp, g_start=s_val, g_end=e_val, t_high=0, t_med=0, risk_method=risk_period_method)
+                    else:
+                        res = calculate_scab_risk(p_date, weather_df, base_temp, g_start=0, g_end=0, t_high=0, t_med=0, risk_method=risk_period_method, day_start=s_val, day_end=e_val)
+                    
+                    if res is None or res['status'] != '判定完了':
+                        valid = False; break
+                    precips.append(res['total_precip'])
+                
+                if valid:
+                    temp_df = pd.DataFrame({'precip': precips, 'rate': incidence_df['rate']})
+                    # 降水量と発生率の相関 (乾燥するほど発生しやすい場合は負の相関が強くなる)
+                    corr = temp_df['precip'].corr(temp_df['rate'])
+                    if pd.notna(corr):
+                        results.append({'start': s_val, 'end': e_val, 'corr': corr, 'precips': precips})
+                        
+        bar.empty()
+        
+        if not results:
+            st.error("有効な推定結果が得られませんでした。データ不足、またはパラメータ範囲が不適切です。")
+            st.stop()
+            
+        opt_df = pd.DataFrame(results)
+        
+        # 相関係数が最も低い（強い負の相関）ものを最適なフィッティングとする
+        # ※降水量が少ない ＝ そうか病発生率が高い という仮説
+        best_fit = opt_df.loc[opt_df['corr'].idxmin()]
+        
+        st.subheader("🎯 最適化フィッティング結果")
+        unit = "GDD" if risk_period_method == "積算温度(GDD)で推定" else "日"
+        
+        st.success(f"**最も相関が強い（最もフィッティングの良い）リスク期:** \n\n"
+                   f"**開始:** {best_fit['start']} {unit}  〜  **終了:** {best_fit['end']} {unit}\n\n"
+                   f"**ピアソン相関係数:** {best_fit['corr']:.3f} (※-1に近いほど、乾燥による発生増加の傾向が強い)")
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+        fig.patch.set_facecolor("#0e1117"); ax.set_facecolor("#1a1d24"); ax.tick_params(colors="white")
+        for spine in ax.spines.values(): spine.set_color("#444")
+        
+        ax.scatter(best_fit['precips'], incidence_df['rate'], color="#FF4B4B", s=80, edgecolor="white", zorder=3)
+        
+        # 回帰線
+        z = np.polyfit(best_fit['precips'], incidence_df['rate'], 1)
+        p = np.poly1d(z)
+        xp = np.linspace(min(best_fit['precips']), max(best_fit['precips']), 100)
+        ax.plot(xp, p(xp), color="white", linestyle="--", alpha=0.5, zorder=2)
+        
+        ax.set_xlabel(f"リスク期({best_fit['start']}〜{best_fit['end']}{unit})の積算降水量 (mm)", color="white")
+        ax.set_ylabel("そうか病 発生率 (%)", color="white")
+        ax.grid(color="#2a2d34", linestyle="-", linewidth=0.5, zorder=0)
+        plt.tight_layout()
+        st.pyplot(fig)
+        
+        st.markdown("### 上位5つのパラメータ候補")
+        top_5 = opt_df.sort_values('corr').head(5).copy()
+        top_5 = top_5.drop(columns=['precips'])
+        top_5.rename(columns={'start': f'開始 ({unit})', 'end': f'終了 ({unit})', 'corr': '相関係数 (R)'}, inplace=True)
+        st.dataframe(top_5, use_container_width=True)
